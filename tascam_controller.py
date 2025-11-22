@@ -1,0 +1,421 @@
+"""
+TASCAM CD-400U RS-232C Controller
+Handles communication with TASCAM CD-400U/CD-400UDAB via RS-232
+"""
+
+import serial
+import time
+import threading
+from typing import Optional, Callable, Dict, Any
+from queue import Queue
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class TascamController:
+    """Controller for TASCAM CD-400U via RS-232C protocol"""
+
+    # Command codes
+    CMD_INFORMATION_REQUEST = '0F'
+    CMD_STOP = '10'
+    CMD_PLAY = '12'
+    CMD_READY = '14'
+    CMD_SEARCH = '16'
+    CMD_EJECT = '18'
+    CMD_TRACK_SKIP = '1A'
+    CMD_DIRECT_TRACK_SEARCH = '23'
+    CMD_RESUME_PLAY_SELECT = '34'
+    CMD_REPEAT_SELECT = '37'
+    CMD_INCR_PLAY_SELECT = '3A'
+    CMD_PLAY_MODE_SELECT = '4D'
+    CMD_PLAY_MODE_SENSE = '4E'
+    CMD_REMOTE_LOCAL_SELECT = '4C'
+    CMD_MECHA_STATUS_SENSE = '50'
+    CMD_TRACK_NO_SENSE = '55'
+    CMD_MEDIA_STATUS_SENSE = '56'
+    CMD_CURRENT_TRACK_INFO_SENSE = '57'
+    CMD_CURRENT_TRACK_TIME_SENSE = '58'
+    CMD_ERROR_SENSE = '78'
+    CMD_CAUTION_SENSE = '79'
+    CMD_DEVICE_SELECT = '7F01'
+
+    # Return command codes
+    RET_INFORMATION = '8F'
+    RET_PLAY_MODE = 'CE'
+    RET_MECHA_STATUS = 'D0'
+    RET_TRACK_NO = 'D5'
+    RET_MEDIA_STATUS = 'D6'
+    RET_CURRENT_TRACK_INFO = 'D7'
+    RET_CURRENT_TRACK_TIME = 'D8'
+    RET_ERROR_SENSE_REQUEST = 'F0'
+    RET_CAUTION_SENSE_REQUEST = 'F1'
+    RET_ILLEGAL_STATUS = 'F2'
+    RET_POWER_ON_STATUS = 'F4'
+    RET_CHANGE_STATUS = 'F6'
+    RET_ERROR_SENSE = 'F8'
+    RET_CAUTION_SENSE = 'F9'
+
+    # Machine ID
+    MACHINE_ID = '0'
+
+    # Timing constants (in seconds)
+    CMD_INTERVAL = 0.1  # 100ms minimum between commands
+    RESPONSE_TIMEOUT = 0.5  # 500ms for response
+    STATUS_POLL_INTERVAL = 0.3  # 300ms for status polling
+
+    def __init__(self, port: str = '/dev/ttyUSB0', baudrate: int = 9600):
+        """
+        Initialize TASCAM controller
+
+        Args:
+            port: Serial port path (e.g., '/dev/ttyUSB0')
+            baudrate: Baud rate (4800, 9600, 19200, 38400, 57600)
+        """
+        self.port = port
+        self.baudrate = baudrate
+        self.serial: Optional[serial.Serial] = None
+        self.connected = False
+
+        # Command queue to ensure proper timing
+        self.cmd_queue = Queue()
+        self.last_cmd_time = 0
+
+        # State tracking
+        self.current_status = {
+            'mecha_status': 'unknown',
+            'track_number': 0,
+            'time_elapsed': '00:00',
+            'media_present': False,
+            'play_mode': 'continuous',
+            'device': 'CD'
+        }
+
+        # Callbacks for status updates
+        self.status_callbacks: list[Callable[[Dict[str, Any]], None]] = []
+
+        # Threading
+        self.cmd_thread: Optional[threading.Thread] = None
+        self.poll_thread: Optional[threading.Thread] = None
+        self.running = False
+
+        # Response buffer
+        self.response_buffer = bytearray()
+
+    def connect(self) -> bool:
+        """Connect to the TASCAM device"""
+        try:
+            self.serial = serial.Serial(
+                port=self.port,
+                baudrate=self.baudrate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=0.1,
+                rtscts=True  # Hardware flow control
+            )
+            self.connected = True
+            self.running = True
+
+            # Start command processing thread
+            self.cmd_thread = threading.Thread(target=self._process_commands, daemon=True)
+            self.cmd_thread.start()
+
+            # Start status polling thread
+            self.poll_thread = threading.Thread(target=self._poll_status, daemon=True)
+            self.poll_thread.start()
+
+            logger.info(f"Connected to TASCAM device on {self.port} at {self.baudrate} baud")
+
+            # Set to remote control mode
+            self._send_command_now(self.CMD_REMOTE_LOCAL_SELECT, '00')
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to connect: {e}")
+            self.connected = False
+            return False
+
+    def disconnect(self):
+        """Disconnect from the TASCAM device"""
+        self.running = False
+
+        if self.cmd_thread:
+            self.cmd_thread.join(timeout=1.0)
+        if self.poll_thread:
+            self.poll_thread.join(timeout=1.0)
+
+        if self.serial and self.serial.is_open:
+            self.serial.close()
+
+        self.connected = False
+        logger.info("Disconnected from TASCAM device")
+
+    def _build_command(self, command: str, data: str = '') -> bytes:
+        """
+        Build a command in TASCAM protocol format
+
+        Format: [LF][ID][COMMAND][DATA][CR]
+        """
+        # Handle vendor commands (7F/FF with subcategory)
+        if command.startswith('7F') or command.startswith('FF'):
+            cmd_bytes = command
+        else:
+            cmd_bytes = command
+
+        cmd_str = f"\n{self.MACHINE_ID}{cmd_bytes}{data}\r"
+        return cmd_str.encode('ascii')
+
+    def _send_command_now(self, command: str, data: str = '') -> bool:
+        """Send command immediately (internal use)"""
+        if not self.connected or not self.serial:
+            return False
+
+        try:
+            # Ensure minimum time between commands
+            elapsed = time.time() - self.last_cmd_time
+            if elapsed < self.CMD_INTERVAL:
+                time.sleep(self.CMD_INTERVAL - elapsed)
+
+            cmd_bytes = self._build_command(command, data)
+            self.serial.write(cmd_bytes)
+            self.last_cmd_time = time.time()
+
+            logger.debug(f"Sent command: {command} {data}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to send command: {e}")
+            return False
+
+    def send_command(self, command: str, data: str = ''):
+        """Queue a command to be sent"""
+        self.cmd_queue.put((command, data))
+
+    def _process_commands(self):
+        """Process command queue (runs in separate thread)"""
+        while self.running:
+            try:
+                if not self.cmd_queue.empty():
+                    command, data = self.cmd_queue.get(timeout=0.1)
+                    self._send_command_now(command, data)
+                else:
+                    time.sleep(0.01)
+            except Exception as e:
+                logger.error(f"Command processing error: {e}")
+
+    def _read_response(self) -> Optional[tuple[str, str]]:
+        """Read and parse response from device"""
+        if not self.serial or not self.serial.is_open:
+            return None
+
+        try:
+            # Read available data
+            if self.serial.in_waiting > 0:
+                data = self.serial.read(self.serial.in_waiting)
+                self.response_buffer.extend(data)
+
+            # Look for complete message (LF...CR)
+            if b'\r' in self.response_buffer:
+                # Find message boundaries
+                cr_idx = self.response_buffer.index(b'\r')
+                message = self.response_buffer[:cr_idx]
+                self.response_buffer = self.response_buffer[cr_idx + 1:]
+
+                # Parse message
+                if len(message) >= 3 and message[0] == 0x0A:  # LF
+                    msg_str = message[1:].decode('ascii', errors='ignore')
+                    if len(msg_str) >= 3:
+                        machine_id = msg_str[0]
+                        command = msg_str[1:3]
+                        data = msg_str[3:] if len(msg_str) > 3 else ''
+
+                        logger.debug(f"Received: cmd={command} data={data}")
+                        return command, data
+
+        except Exception as e:
+            logger.error(f"Response read error: {e}")
+
+        return None
+
+    def _poll_status(self):
+        """Poll device status periodically"""
+        while self.running:
+            try:
+                # Read any incoming responses
+                response = self._read_response()
+                if response:
+                    self._handle_response(*response)
+
+                # Poll status
+                self.send_command(self.CMD_MECHA_STATUS_SENSE)
+                time.sleep(0.1)
+                self.send_command(self.CMD_TRACK_NO_SENSE)
+                time.sleep(0.1)
+                self.send_command(self.CMD_CURRENT_TRACK_TIME_SENSE, '00')
+
+                time.sleep(self.STATUS_POLL_INTERVAL)
+
+            except Exception as e:
+                logger.error(f"Status polling error: {e}")
+                time.sleep(1.0)
+
+    def _handle_response(self, command: str, data: str):
+        """Handle response from device"""
+        updated = False
+
+        if command == self.RET_MECHA_STATUS:
+            # Parse mecha status
+            status_map = {
+                '00': 'no_media',
+                '01': 'ejecting',
+                '10': 'stop',
+                '11': 'play',
+                '12': 'ready',
+                '28': 'search_forward',
+                '29': 'search_backward',
+                'FF': 'other'
+            }
+            self.current_status['mecha_status'] = status_map.get(data[:2], 'unknown')
+            updated = True
+
+        elif command == self.RET_TRACK_NO:
+            # Parse track number (format: tens, ones, thousands, hundreds)
+            if len(data) >= 4:
+                tens = int(data[0])
+                ones = int(data[1])
+                thousands = int(data[2])
+                hundreds = int(data[3])
+                track_num = thousands * 1000 + hundreds * 100 + tens * 10 + ones
+                self.current_status['track_number'] = track_num
+                updated = True
+
+        elif command == self.RET_CURRENT_TRACK_TIME:
+            # Parse time (format: type, min_tens, min_ones, min_thousands, min_hundreds, sec_tens, sec_ones, ...)
+            if len(data) >= 10:
+                min_tens = int(data[2])
+                min_ones = int(data[3])
+                sec_tens = int(data[6])
+                sec_ones = int(data[7])
+                minutes = min_tens * 10 + min_ones
+                seconds = sec_tens * 10 + sec_ones
+                self.current_status['time_elapsed'] = f"{minutes:02d}:{seconds:02d}"
+                updated = True
+
+        elif command == self.RET_MEDIA_STATUS:
+            # Parse media status
+            if len(data) >= 2:
+                self.current_status['media_present'] = (data[:2] == '01')
+                updated = True
+
+        elif command == self.RET_CHANGE_STATUS:
+            # Status changed - trigger immediate poll
+            logger.info("Status changed notification received")
+
+        elif command == self.RET_ERROR_SENSE_REQUEST:
+            # Error occurred
+            self.send_command(self.CMD_ERROR_SENSE)
+
+        elif command == self.RET_CAUTION_SENSE_REQUEST:
+            # Caution state
+            self.send_command(self.CMD_CAUTION_SENSE)
+
+        elif command == self.RET_ILLEGAL_STATUS:
+            logger.warning("Illegal command/status received")
+
+        # Notify callbacks if status updated
+        if updated:
+            self._notify_callbacks()
+
+    def _notify_callbacks(self):
+        """Notify all registered callbacks of status update"""
+        for callback in self.status_callbacks:
+            try:
+                callback(self.current_status.copy())
+            except Exception as e:
+                logger.error(f"Callback error: {e}")
+
+    def register_callback(self, callback: Callable[[Dict[str, Any]], None]):
+        """Register a callback for status updates"""
+        self.status_callbacks.append(callback)
+
+    # Transport control methods
+    def play(self):
+        """Start playback"""
+        self.send_command(self.CMD_PLAY)
+
+    def stop(self):
+        """Stop playback"""
+        self.send_command(self.CMD_STOP)
+
+    def eject(self):
+        """Eject CD"""
+        self.send_command(self.CMD_EJECT)
+
+    def next_track(self):
+        """Skip to next track"""
+        self.send_command(self.CMD_TRACK_SKIP, '00')
+
+    def previous_track(self):
+        """Skip to previous track"""
+        self.send_command(self.CMD_TRACK_SKIP, '01')
+
+    def search_forward(self, high_speed: bool = False):
+        """Search forward"""
+        data = '10' if high_speed else '00'
+        self.send_command(self.CMD_SEARCH, data)
+
+    def search_reverse(self, high_speed: bool = False):
+        """Search backward"""
+        data = '11' if high_speed else '01'
+        self.send_command(self.CMD_SEARCH, data)
+
+    def goto_track(self, track_number: int):
+        """
+        Go to specific track
+
+        Args:
+            track_number: Track number (1-999)
+        """
+        if not 1 <= track_number <= 999:
+            logger.error(f"Invalid track number: {track_number}")
+            return
+
+        # Format: tens, ones, thousands, hundreds
+        thousands = (track_number // 1000) % 10
+        hundreds = (track_number // 100) % 10
+        tens = (track_number // 10) % 10
+        ones = track_number % 10
+
+        data = f"{tens}{ones}{thousands}{hundreds}"
+        self.send_command(self.CMD_DIRECT_TRACK_SEARCH, data)
+
+    def set_play_mode(self, mode: str):
+        """
+        Set playback mode
+
+        Args:
+            mode: 'continuous', 'single', or 'random'
+        """
+        mode_map = {
+            'continuous': '00',
+            'single': '01',
+            'random': '06'
+        }
+
+        if mode in mode_map:
+            self.send_command(self.CMD_PLAY_MODE_SELECT, mode_map[mode])
+            self.current_status['play_mode'] = mode
+        else:
+            logger.error(f"Invalid play mode: {mode}")
+
+    def set_repeat(self, enabled: bool):
+        """Enable/disable repeat mode"""
+        data = '01' if enabled else '00'
+        self.send_command(self.CMD_REPEAT_SELECT, data)
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get current device status"""
+        return self.current_status.copy()
