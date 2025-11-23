@@ -187,6 +187,69 @@ def set_repeat():
     return jsonify({'success': False, 'message': 'Not connected'}), 400
 
 
+@app.route('/api/pause', methods=['POST'])
+def pause():
+    """Pause playback"""
+    if controller and controller.connected:
+        controller.pause()
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
+@app.route('/api/resume', methods=['POST'])
+def resume():
+    """Resume from pause"""
+    if controller and controller.connected:
+        controller.resume()
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
+@app.route('/api/search/start', methods=['POST'])
+def search_start():
+    """Start searching"""
+    if controller and controller.connected:
+        data = request.get_json() or {}
+        forward = data.get('forward', True)
+        high_speed = data.get('high_speed', False)
+        controller.search_start(forward=forward, high_speed=high_speed)
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
+@app.route('/api/search/stop', methods=['POST'])
+def search_stop():
+    """Stop searching"""
+    if controller and controller.connected:
+        controller.search_stop()
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
+@app.route('/api/resume-mode', methods=['POST'])
+def set_resume_mode():
+    """Toggle resume mode"""
+    if controller and controller.connected:
+        data = request.get_json() or {}
+        enabled = data.get('enabled', False)
+        controller.set_resume_mode(enabled)
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
+@app.route('/api/device/<device>', methods=['POST'])
+def switch_device(device):
+    """Switch input source"""
+    if controller and controller.connected:
+        valid_devices = ['cd', 'usb', 'sd', 'bluetooth', 'fm', 'am', 'dab', 'aux']
+        if device.lower() in valid_devices:
+            controller.switch_device(device)
+            return jsonify({'success': True})
+        else:
+            return jsonify({'success': False, 'message': 'Invalid device'}), 400
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
 # WebSocket events
 @socketio.on('connect')
 def handle_connect():
