@@ -357,6 +357,21 @@
                 <div class="time-display" id="timeDisplay">00:00</div>
                 <div class="status-text" id="mechaStatus">NO MEDIA</div>
             </div>
+
+            <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 15px; font-size: 0.85em;">
+                <div style="text-align: center; color: var(--text-secondary);">
+                    <div style="font-size: 0.7em; opacity: 0.7;">SOURCE</div>
+                    <div id="deviceName" style="color: var(--success); font-weight: bold;">CD</div>
+                </div>
+                <div style="text-align: center; color: var(--text-secondary);">
+                    <div style="font-size: 0.7em; opacity: 0.7;">TRACKS</div>
+                    <div id="totalTracks" style="color: var(--success); font-weight: bold;">--</div>
+                </div>
+                <div style="text-align: center; color: var(--text-secondary);">
+                    <div style="font-size: 0.7em; opacity: 0.7;">MEDIA</div>
+                    <div id="mediaType" style="color: var(--success); font-weight: bold;">--</div>
+                </div>
+            </div>
         </div>
 
         <div class="controls-section">
@@ -365,11 +380,20 @@
                 <button class="control-btn primary" id="btnPlay" disabled>
                     ▶ PLAY
                 </button>
+                <button class="control-btn" id="btnPause" disabled>
+                    ⏸ PAUSE
+                </button>
                 <button class="control-btn" id="btnStop" disabled>
                     ⏹ STOP
                 </button>
                 <button class="control-btn" id="btnEject" disabled>
                     ⏏ EJECT
+                </button>
+                <button class="control-btn" id="btnRew" disabled>
+                    ⏪ REW
+                </button>
+                <button class="control-btn" id="btnFwd" disabled>
+                    ⏩ FWD
                 </button>
                 <button class="control-btn" id="btnPrev" disabled>
                     ⏮ PREV
@@ -391,6 +415,20 @@
                 <button class="mode-btn active" data-mode="continuous">Continuous</button>
                 <button class="mode-btn" data-mode="single">Single</button>
                 <button class="mode-btn" data-mode="random">Random</button>
+            </div>
+        </div>
+
+        <div class="controls-section">
+            <h3 class="section-title">Source Selection</h3>
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+                <button class="mode-btn active" data-device="cd">CD</button>
+                <button class="mode-btn" data-device="usb">USB</button>
+                <button class="mode-btn" data-device="sd">SD</button>
+                <button class="mode-btn" data-device="bluetooth">BT</button>
+                <button class="mode-btn" data-device="fm">FM</button>
+                <button class="mode-btn" data-device="am">AM</button>
+                <button class="mode-btn" data-device="dab">DAB</button>
+                <button class="mode-btn" data-device="aux">AUX</button>
             </div>
         </div>
 
@@ -430,16 +468,23 @@
         const trackNumber = document.getElementById('trackNumber');
         const timeDisplay = document.getElementById('timeDisplay');
         const mechaStatus = document.getElementById('mechaStatus');
+        const totalTracks = document.getElementById('totalTracks');
+        const mediaType = document.getElementById('mediaType');
+        const deviceName = document.getElementById('deviceName');
 
         const btnPlay = document.getElementById('btnPlay');
+        const btnPause = document.getElementById('btnPause');
         const btnStop = document.getElementById('btnStop');
         const btnEject = document.getElementById('btnEject');
+        const btnRew = document.getElementById('btnRew');
+        const btnFwd = document.getElementById('btnFwd');
         const btnPrev = document.getElementById('btnPrev');
         const btnNext = document.getElementById('btnNext');
         const btnGoto = document.getElementById('btnGoto');
         const trackInput = document.getElementById('trackInput');
 
-        const modeBtns = document.querySelectorAll('.mode-btn');
+        const modeBtns = document.querySelectorAll('[data-mode]');
+        const deviceBtns = document.querySelectorAll('[data-device]');
         const settingsToggle = document.getElementById('settingsToggle');
         const settingsPanel = document.getElementById('settingsPanel');
         const btnConnect = document.getElementById('btnConnect');
@@ -480,10 +525,35 @@
 
         // Transport controls
         btnPlay.addEventListener('click', () => sendCommand('/api/play'));
+        btnPause.addEventListener('click', () => sendCommand('/api/pause'));
         btnStop.addEventListener('click', () => sendCommand('/api/stop'));
         btnEject.addEventListener('click', () => sendCommand('/api/eject'));
         btnPrev.addEventListener('click', () => sendCommand('/api/previous'));
         btnNext.addEventListener('click', () => sendCommand('/api/next'));
+
+        // Search controls (hold to search, release to stop)
+        let searchInterval;
+        btnRew.addEventListener('mousedown', () => {
+            sendCommandWithData('/api/search/start', { forward: false, high_speed: false });
+        });
+        btnRew.addEventListener('mouseup', () => sendCommand('/api/search/stop'));
+        btnRew.addEventListener('mouseleave', () => sendCommand('/api/search/stop'));
+        btnRew.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            sendCommandWithData('/api/search/start', { forward: false, high_speed: false });
+        });
+        btnRew.addEventListener('touchend', () => sendCommand('/api/search/stop'));
+
+        btnFwd.addEventListener('mousedown', () => {
+            sendCommandWithData('/api/search/start', { forward: true, high_speed: false });
+        });
+        btnFwd.addEventListener('mouseup', () => sendCommand('/api/search/stop'));
+        btnFwd.addEventListener('mouseleave', () => sendCommand('/api/search/stop'));
+        btnFwd.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            sendCommandWithData('/api/search/start', { forward: true, high_speed: false });
+        });
+        btnFwd.addEventListener('touchend', () => sendCommand('/api/search/stop'));
 
         btnGoto.addEventListener('click', () => {
             const track = parseInt(trackInput.value);
@@ -509,6 +579,17 @@
             });
         });
 
+        // Device selection
+        deviceBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const device = btn.dataset.device;
+                sendCommand(`/api/device/${device}`);
+
+                deviceBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+
         // Send command helper
         async function sendCommand(endpoint) {
             if (!connected) return;
@@ -517,6 +598,25 @@
                 const response = await fetch(endpoint, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (!response.ok) {
+                    console.error('Command failed:', endpoint);
+                }
+            } catch (error) {
+                console.error('Command error:', error);
+            }
+        }
+
+        // Send command with data helper
+        async function sendCommandWithData(endpoint, data) {
+            if (!connected) return;
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
                 });
 
                 if (!response.ok) {
@@ -547,8 +647,11 @@
         // Enable/disable controls
         function enableControls(enabled) {
             btnPlay.disabled = !enabled;
+            btnPause.disabled = !enabled;
             btnStop.disabled = !enabled;
             btnEject.disabled = !enabled;
+            btnRew.disabled = !enabled;
+            btnFwd.disabled = !enabled;
             btnPrev.disabled = !enabled;
             btnNext.disabled = !enabled;
             btnGoto.disabled = !enabled;
@@ -582,13 +685,33 @@
             // Time
             timeDisplay.textContent = status.time_elapsed || '00:00';
 
+            // Disc info
+            if (status.total_tracks > 0) {
+                totalTracks.textContent = status.total_tracks;
+            } else {
+                totalTracks.textContent = '--';
+            }
+
+            // Media type
+            if (status.media_type && status.media_type !== 'unknown') {
+                const shortType = status.media_type.replace('CD-DA/', '').replace('CD-ROM/', 'Data');
+                mediaType.textContent = shortType;
+            } else {
+                mediaType.textContent = '--';
+            }
+
+            // Device name
+            if (status.device_name) {
+                deviceName.textContent = status.device_name;
+            }
+
             // Mecha status
             const statusMap = {
                 'no_media': 'NO MEDIA',
                 'ejecting': 'EJECTING',
                 'stop': 'STOPPED',
                 'play': '▶ PLAYING',
-                'ready': 'READY',
+                'ready': '⏸ PAUSED',
                 'search_forward': '⏩ SEARCH FWD',
                 'search_backward': '⏪ SEARCH REV',
                 'unknown': 'UNKNOWN'

@@ -86,10 +86,17 @@ class TascamController:
         self.current_status = {
             'mecha_status': 'unknown',
             'track_number': 0,
+            'total_tracks': 0,
             'time_elapsed': '00:00',
+            'time_remaining': '00:00',
+            'total_time': '00:00',
             'media_present': False,
+            'media_type': 'unknown',
             'play_mode': 'continuous',
-            'device': 'CD'
+            'repeat_mode': False,
+            'resume_mode': False,
+            'device': 'CD',
+            'device_name': 'CD'
         }
 
         # Callbacks for status updates
@@ -242,6 +249,7 @@ class TascamController:
 
     def _poll_status(self):
         """Poll device status periodically"""
+        poll_count = 0
         while self.running:
             try:
                 # Read any incoming responses
@@ -256,6 +264,19 @@ class TascamController:
                 time.sleep(0.1)
                 self.send_command(self.CMD_CURRENT_TRACK_TIME_SENSE, '00')
 
+                # Poll additional info less frequently (every 10 polls = ~3 seconds)
+                if poll_count % 10 == 0:
+                    time.sleep(0.1)
+                    self.send_command(self.CMD_MEDIA_STATUS_SENSE)
+                    time.sleep(0.1)
+                    self.send_command(self.CMD_CURRENT_TRACK_INFO_SENSE)
+                    time.sleep(0.1)
+                    self.send_command(self.CMD_PLAY_MODE_SENSE)
+                    time.sleep(0.1)
+                    # Query current device
+                    self.send_command(self.CMD_DEVICE_SELECT, 'FF')
+
+                poll_count += 1
                 time.sleep(self.STATUS_POLL_INTERVAL)
 
             except Exception as e:
@@ -305,9 +326,37 @@ class TascamController:
                 updated = True
 
         elif command == self.RET_MEDIA_STATUS:
-            # Parse media status
-            if len(data) >= 2:
+            # Parse media status (4 bytes: media present, media type)
+            if len(data) >= 4:
                 self.current_status['media_present'] = (data[:2] == '01')
+                media_type_code = data[2:4]
+                media_type_map = {
+                    '00': 'CD-DA/Audio',
+                    '10': 'CD-ROM/Data'
+                }
+                self.current_status['media_type'] = media_type_map.get(media_type_code, 'Unknown')
+                updated = True
+
+        elif command == self.RET_CURRENT_TRACK_INFO:
+            # Parse track info (total tracks in same format as track number)
+            if len(data) >= 4:
+                tens = int(data[0])
+                ones = int(data[1])
+                thousands = int(data[2])
+                hundreds = int(data[3])
+                total_tracks = thousands * 1000 + hundreds * 100 + tens * 10 + ones
+                self.current_status['total_tracks'] = total_tracks
+                updated = True
+
+        elif command == self.RET_PLAY_MODE:
+            # Parse play mode (2 bytes)
+            if len(data) >= 2:
+                mode_map = {
+                    '00': 'continuous',
+                    '01': 'single',
+                    '06': 'random'
+                }
+                self.current_status['play_mode'] = mode_map.get(data[:2], 'continuous')
                 updated = True
 
         elif command == self.RET_CHANGE_STATUS:
@@ -415,6 +464,77 @@ class TascamController:
         """Enable/disable repeat mode"""
         data = '01' if enabled else '00'
         self.send_command(self.CMD_REPEAT_SELECT, data)
+        self.current_status['repeat_mode'] = enabled
+
+    def pause(self):
+        """Pause/Ready mode (playback standby)"""
+        self.send_command(self.CMD_READY, '01')
+
+    def resume(self):
+        """Resume from pause"""
+        self.send_command(self.CMD_READY, '00')
+
+    def set_resume_mode(self, enabled: bool):
+        """Enable/disable resume play mode"""
+        data = '01' if enabled else '00'
+        self.send_command(self.CMD_RESUME_PLAY_SELECT, data)
+        self.current_status['resume_mode'] = enabled
+
+    def set_incremental_play(self, enabled: bool):
+        """Enable/disable incremental playback"""
+        data = '01' if enabled else '00'
+        self.send_command(self.CMD_INCR_PLAY_SELECT, data)
+
+    def search_start(self, forward: bool = True, high_speed: bool = False):
+        """Start searching forward or backward"""
+        if forward:
+            data = '10' if high_speed else '00'
+        else:
+            data = '11' if high_speed else '01'
+        self.send_command(self.CMD_SEARCH, data)
+
+    def search_stop(self):
+        """Stop searching (by issuing play command)"""
+        self.send_command(self.CMD_PLAY)
+
+    def switch_device(self, device: str):
+        """
+        Switch input source/device
+
+        Args:
+            device: One of 'cd', 'usb', 'sd', 'bluetooth', 'fm', 'am', 'dab', 'aux'
+        """
+        device_map = {
+            'sd': '00',
+            'usb': '10',
+            'cd': '11',
+            'bluetooth': '20',
+            'fm': '30',
+            'dab': '30',
+            'am': '31',
+            'aux': '40'
+        }
+
+        device_lower = device.lower()
+        if device_lower in device_map:
+            # Vendor command format: 7F + category (01) + device code
+            self.send_command('7F', f"01{device_map[device_lower]}")
+            self.current_status['device'] = device_lower
+
+            # Update device name
+            device_names = {
+                'sd': 'SD Card',
+                'usb': 'USB',
+                'cd': 'CD',
+                'bluetooth': 'Bluetooth',
+                'fm': 'FM Radio',
+                'dab': 'DAB Radio',
+                'am': 'AM Radio',
+                'aux': 'AUX Input'
+            }
+            self.current_status['device_name'] = device_names.get(device_lower, device.upper())
+        else:
+            logger.error(f"Invalid device: {device}")
 
     def get_status(self) -> Dict[str, Any]:
         """Get current device status"""
