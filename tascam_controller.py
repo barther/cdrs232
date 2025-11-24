@@ -27,12 +27,16 @@ class TascamController:
     CMD_TRACK_SKIP = '1A'
     CMD_DIRECT_TRACK_SEARCH = '23'
     CMD_RESUME_PLAY_SELECT = '34'
+    CMD_RESUME_PLAY_SENSE = '35'
     CMD_REPEAT_SELECT = '37'
+    CMD_REPEAT_SENSE = '38'
     CMD_INCR_PLAY_SELECT = '3A'
+    CMD_INCR_PLAY_SENSE = '3B'
     CMD_CLEAR = '4A'  # Clear/dismiss message (like NO button)
     CMD_REMOTE_LOCAL_SELECT = '4C'
-    CMD_PLAY_MODE_SELECT = '4D'
-    CMD_PLAY_MODE_SENSE = '4E'
+    CMD_REMOTE_LOCAL_SENSE = '4D'
+    CMD_PLAY_MODE_SELECT = '4E'
+    CMD_PLAY_MODE_SENSE = '4F'
     CMD_MECHA_STATUS_SENSE = '50'
     CMD_TRACK_NO_SENSE = '55'
     CMD_MEDIA_STATUS_SENSE = '56'
@@ -49,7 +53,11 @@ class TascamController:
 
     # Return command codes
     RET_INFORMATION = '8F'
-    RET_PLAY_MODE = 'CE'
+    RET_RESUME_PLAY = 'B5'  # Resume mode return
+    RET_REPEAT = 'B8'  # Repeat mode return
+    RET_INCR_PLAY = 'BB'  # Incremental play return
+    RET_REMOTE_LOCAL = 'CD'  # Remote/local mode return
+    RET_PLAY_MODE = 'CF'
     RET_MECHA_STATUS = 'D0'
     RET_TRACK_NO = 'D5'
     RET_MEDIA_STATUS = 'D6'
@@ -63,6 +71,7 @@ class TascamController:
     RET_CHANGE_STATUS = 'F6'
     RET_ERROR_SENSE = 'F8'
     RET_CAUTION_SENSE = 'F9'
+    RET_VENDOR = 'FF'  # Vendor command return (check category byte)
 
     # Machine ID
     MACHINE_ID = '0'
@@ -72,6 +81,9 @@ class TascamController:
     RESPONSE_TIMEOUT = 0.5  # 500ms for response
     STATUS_POLL_INTERVAL = 0.3  # 300ms for status polling
 
+    # Allowed baud rates per TASCAM RS-232C spec
+    VALID_BAUDRATES = [4800, 9600, 19200, 38400, 57600]
+
     def __init__(self, port: str = '/dev/ttyUSB0', baudrate: int = 9600):
         """
         Initialize TASCAM controller
@@ -79,7 +91,13 @@ class TascamController:
         Args:
             port: Serial port path (e.g., '/dev/ttyUSB0')
             baudrate: Baud rate (4800, 9600, 19200, 38400, 57600)
+
+        Raises:
+            ValueError: If baudrate is not in the allowed set
         """
+        if baudrate not in self.VALID_BAUDRATES:
+            raise ValueError(f"Invalid baudrate {baudrate}. Must be one of {self.VALID_BAUDRATES}")
+
         self.port = port
         self.baudrate = baudrate
         self.serial: Optional[serial.Serial] = None
@@ -95,22 +113,27 @@ class TascamController:
         self.reconnect_interval = 5.0  # Try reconnecting every 5 seconds
         self.last_reconnect_attempt = 0
 
-        # State tracking
+        # State tracking (per PDF spec)
         self.current_status = {
             'mecha_status': 'unknown',
-            'track_number': 0,
-            'total_tracks': 0,
-            'time_elapsed': '00:00',
+            'track_number': 0,  # Currently playing/selected track (D5)
+            'current_track': 0,  # Current track info from D7
+            'total_tracks': 0,  # Total tracks on disc (DD)
+            'time_elapsed': '00:00',  # Current track time
             'time_remaining': '00:00',
-            'total_time': '00:00',
+            'total_time': '00:00',  # Total disc time (DD)
             'media_present': False,
             'media_type': 'unknown',
             'play_mode': 'continuous',
             'repeat_mode': False,
             'resume_mode': False,
+            'incremental_play': False,
+            'remote_local_mode': 'unknown',
             'device': 'CD',
             'device_name': 'CD',
-            'is_tuner': False
+            'is_tuner': False,
+            'error_status': None,  # Structured error info from F8
+            'caution_status': None  # Structured caution info from F9
         }
 
         # Callbacks for status updates
@@ -182,6 +205,7 @@ class TascamController:
         self.current_status = {
             'mecha_status': 'unknown',
             'track_number': 0,
+            'current_track': 0,
             'total_tracks': 0,
             'time_elapsed': '00:00',
             'time_remaining': '00:00',
@@ -191,9 +215,13 @@ class TascamController:
             'play_mode': 'continuous',
             'repeat_mode': False,
             'resume_mode': False,
+            'incremental_play': False,
+            'remote_local_mode': 'unknown',
             'device': 'CD',
             'device_name': 'CD',
-            'is_tuner': False
+            'is_tuner': False,
+            'error_status': None,
+            'caution_status': None
         }
         # Notify listeners of status reset
         self._notify_status_changed()
@@ -334,6 +362,17 @@ class TascamController:
                     # Query current device
                     self.send_command(self.CMD_DEVICE_SELECT, 'FF')
 
+                # Poll mode settings even less frequently (every 30 polls = ~9 seconds)
+                if poll_count % 30 == 0:
+                    time.sleep(0.1)
+                    self.send_command(self.CMD_RESUME_PLAY_SENSE)
+                    time.sleep(0.1)
+                    self.send_command(self.CMD_REPEAT_SENSE)
+                    time.sleep(0.1)
+                    self.send_command(self.CMD_INCR_PLAY_SENSE)
+                    time.sleep(0.1)
+                    self.send_command(self.CMD_REMOTE_LOCAL_SENSE)
+
                 # Track health: if we didn't get a response, increment failure count
                 if not got_response:
                     self.consecutive_failures += 1
@@ -412,14 +451,17 @@ class TascamController:
                 updated = True
 
         elif command == self.RET_CURRENT_TRACK_INFO:
-            # Parse track info (total tracks in same format as track number)
+            # D7: CURRENT TRACK INFORMATION RETURN
+            # Per PDF spec: Returns current track/preset info (not total tracks)
+            # For CD/USB/SD: current track number
+            # For tuner: current preset/frequency info
             if len(data) >= 4:
                 tens = int(data[0])
                 ones = int(data[1])
                 thousands = int(data[2])
                 hundreds = int(data[3])
-                total_tracks = thousands * 1000 + hundreds * 100 + tens * 10 + ones
-                self.current_status['total_tracks'] = total_tracks
+                current_track = thousands * 1000 + hundreds * 100 + tens * 10 + ones
+                self.current_status['current_track'] = current_track
                 updated = True
 
         elif command == self.RET_PLAY_MODE:
@@ -458,16 +500,115 @@ class TascamController:
                     self.current_status['total_time'] = f"{minutes:02d}:{seconds:02d}"
                 updated = True
 
+        elif command == self.RET_VENDOR:
+            # FF: Vendor command return - check category byte
+            if len(data) >= 2:
+                category = data[:2]
+                if category == '01':  # DEVICE SELECT RETURN
+                    # Data7 = device kind, Data8 = device index
+                    if len(data) >= 8:
+                        device_kind = data[6:8]
+                        # Decode device kind per PDF spec (CD-400U)
+                        device_map = {
+                            '00': ('sd', 'SD Card'),
+                            '10': ('usb', 'USB'),
+                            '11': ('cd', 'CD'),
+                            '20': ('bluetooth', 'Bluetooth'),
+                            '30': ('fm', 'FM Radio'),  # CD-400U
+                            '31': ('am', 'AM Radio'),  # CD-400U
+                            '40': ('aux', 'AUX Input')
+                        }
+                        if device_kind in device_map:
+                            device_code, device_name = device_map[device_kind]
+                            self.current_status['device'] = device_code
+                            self.current_status['device_name'] = device_name
+                            self.current_status['is_tuner'] = device_code in ['fm', 'am']
+                            updated = True
+                            logger.debug(f"Device changed to: {device_name}")
+
+        elif command == self.RET_RESUME_PLAY:
+            # B5: Resume mode return
+            if len(data) >= 2:
+                self.current_status['resume_mode'] = (data[:2] == '01')
+                updated = True
+
+        elif command == self.RET_REPEAT:
+            # B8: Repeat mode return
+            if len(data) >= 2:
+                self.current_status['repeat_mode'] = (data[:2] == '01')
+                updated = True
+
+        elif command == self.RET_INCR_PLAY:
+            # BB: Incremental play return
+            if len(data) >= 2:
+                self.current_status['incremental_play'] = (data[:2] == '01')
+                updated = True
+
+        elif command == self.RET_REMOTE_LOCAL:
+            # CD: Remote/local mode return
+            if len(data) >= 2:
+                mode_map = {
+                    '00': 'remote_only',
+                    '01': 'remote_and_local'
+                }
+                self.current_status['remote_local_mode'] = mode_map.get(data[:2], 'unknown')
+                updated = True
+
+        elif command == self.RET_ERROR_SENSE:
+            # F8: Error status return - parse error bits
+            if len(data) >= 2:
+                error_byte = int(data[:2], 16)
+                errors = []
+                if error_byte & 0x01: errors.append('focus_error')
+                if error_byte & 0x02: errors.append('tracking_error')
+                if error_byte & 0x04: errors.append('spindle_error')
+                if error_byte & 0x08: errors.append('sled_error')
+                if error_byte & 0x10: errors.append('tray_error')
+                if error_byte & 0x20: errors.append('no_disc')
+                if error_byte & 0x40: errors.append('cannot_play')
+                if error_byte & 0x80: errors.append('other_error')
+
+                self.current_status['error_status'] = {
+                    'raw': error_byte,
+                    'errors': errors,
+                    'has_error': len(errors) > 0
+                }
+                updated = True
+                if errors:
+                    logger.warning(f"Device errors: {', '.join(errors)}")
+
+        elif command == self.RET_CAUTION_SENSE:
+            # F9: Caution status return - parse caution bits
+            if len(data) >= 2:
+                caution_byte = int(data[:2], 16)
+                cautions = []
+                if caution_byte & 0x01: cautions.append('unsupported_disc')
+                if caution_byte & 0x02: cautions.append('dirty_disc')
+                if caution_byte & 0x04: cautions.append('no_audio')
+                if caution_byte & 0x08: cautions.append('temperature_high')
+                if caution_byte & 0x10: cautions.append('copyright_protected')
+
+                self.current_status['caution_status'] = {
+                    'raw': caution_byte,
+                    'cautions': cautions,
+                    'has_caution': len(cautions) > 0
+                }
+                updated = True
+                if cautions:
+                    logger.info(f"Device cautions: {', '.join(cautions)}")
+
         elif command == self.RET_CHANGE_STATUS:
-            # Status changed - trigger immediate poll
+            # F6: Status changed - trigger immediate poll
             logger.info("Status changed notification received")
+            # Query device to update status
+            self.send_command(self.CMD_DEVICE_SELECT, 'FF')
 
         elif command == self.RET_ERROR_SENSE_REQUEST:
-            # Error occurred
+            # F0: Error occurred - query error details
             self.send_command(self.CMD_ERROR_SENSE)
 
         elif command == self.RET_CAUTION_SENSE_REQUEST:
-            # Caution state
+            # F1: Caution state - query caution details
             self.send_command(self.CMD_CAUTION_SENSE)
 
         elif command == self.RET_ILLEGAL_STATUS:
