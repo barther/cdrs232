@@ -403,9 +403,43 @@
                 </button>
             </div>
 
-            <div class="track-input-group">
+            <div class="track-input-group" id="mediaTrackInput">
                 <input type="number" class="track-input" id="trackInput" placeholder="Track #" min="1" max="999" disabled>
                 <button class="control-btn" id="btnGoto" disabled style="flex: 0 0 80px;">GO</button>
+            </div>
+        </div>
+
+        <!-- Tuner Controls (shown for FM/AM/DAB radio) -->
+        <div class="controls-section" id="tunerControls" style="display: none;">
+            <h3 class="section-title">Tuner Controls</h3>
+            <div class="transport-controls">
+                <button class="control-btn" id="btnTuneDown" disabled>
+                    ◀ TUNE DOWN
+                </button>
+                <button class="control-btn" id="btnTuneUp" disabled>
+                    TUNE UP ▶
+                </button>
+                <button class="control-btn" id="btnSeekDown" disabled>
+                    ⏪ SEEK ◀
+                </button>
+                <button class="control-btn" id="btnSeekUp" disabled>
+                    ▶ SEEK ⏩
+                </button>
+            </div>
+
+            <div class="track-input-group">
+                <input type="number" class="track-input" id="presetInput" placeholder="Preset #" min="1" max="99" disabled>
+                <button class="control-btn" id="btnPreset" disabled style="flex: 0 0 80px;">GO</button>
+            </div>
+
+            <!-- Quick Preset Buttons -->
+            <div style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-top: 10px;">
+                <button class="mode-btn" id="preset1" disabled>1</button>
+                <button class="mode-btn" id="preset2" disabled>2</button>
+                <button class="mode-btn" id="preset3" disabled>3</button>
+                <button class="mode-btn" id="preset4" disabled>4</button>
+                <button class="mode-btn" id="preset5" disabled>5</button>
+                <button class="mode-btn" id="preset6" disabled>6</button>
             </div>
         </div>
 
@@ -483,6 +517,22 @@
         const btnGoto = document.getElementById('btnGoto');
         const trackInput = document.getElementById('trackInput');
 
+        // Tuner controls
+        const tunerControls = document.getElementById('tunerControls');
+        const mediaTrackInput = document.getElementById('mediaTrackInput');
+        const btnTuneUp = document.getElementById('btnTuneUp');
+        const btnTuneDown = document.getElementById('btnTuneDown');
+        const btnSeekUp = document.getElementById('btnSeekUp');
+        const btnSeekDown = document.getElementById('btnSeekDown');
+        const btnPreset = document.getElementById('btnPreset');
+        const presetInput = document.getElementById('presetInput');
+        const preset1 = document.getElementById('preset1');
+        const preset2 = document.getElementById('preset2');
+        const preset3 = document.getElementById('preset3');
+        const preset4 = document.getElementById('preset4');
+        const preset5 = document.getElementById('preset5');
+        const preset6 = document.getElementById('preset6');
+
         const modeBtns = document.querySelectorAll('[data-mode]');
         const deviceBtns = document.querySelectorAll('[data-device]');
         const settingsToggle = document.getElementById('settingsToggle');
@@ -492,6 +542,7 @@
         const baudRate = document.getElementById('baudRate');
 
         let connected = false;
+        let isTuner = false;
 
         // Settings toggle
         settingsToggle.addEventListener('click', () => {
@@ -590,6 +641,30 @@
             });
         });
 
+        // Tuner controls
+        btnTuneUp.addEventListener('click', () => sendCommand('/api/tuner/frequency/up'));
+        btnTuneDown.addEventListener('click', () => sendCommand('/api/tuner/frequency/down'));
+        btnSeekUp.addEventListener('click', () => sendCommand('/api/tuner/seek/up'));
+        btnSeekDown.addEventListener('click', () => sendCommand('/api/tuner/seek/down'));
+
+        btnPreset.addEventListener('click', () => {
+            const preset = parseInt(presetInput.value);
+            if (preset >= 1 && preset <= 99) {
+                sendCommand(`/api/tuner/preset/${preset}`);
+            }
+        });
+
+        presetInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                btnPreset.click();
+            }
+        });
+
+        // Quick preset buttons
+        [preset1, preset2, preset3, preset4, preset5, preset6].forEach((btn, index) => {
+            btn.addEventListener('click', () => sendCommand(`/api/tuner/preset/${index + 1}`));
+        });
+
         // Send command helper
         async function sendCommand(endpoint) {
             if (!connected) return;
@@ -656,6 +731,22 @@
             btnNext.disabled = !enabled;
             btnGoto.disabled = !enabled;
             trackInput.disabled = !enabled;
+
+            // Tuner controls
+            if (isTuner) {
+                btnTuneUp.disabled = !enabled;
+                btnTuneDown.disabled = !enabled;
+                btnSeekUp.disabled = !enabled;
+                btnSeekDown.disabled = !enabled;
+                btnPreset.disabled = !enabled;
+                presetInput.disabled = !enabled;
+                preset1.disabled = !enabled;
+                preset2.disabled = !enabled;
+                preset3.disabled = !enabled;
+                preset4.disabled = !enabled;
+                preset5.disabled = !enabled;
+                preset6.disabled = !enabled;
+            }
         }
 
         // Socket.IO event handlers
@@ -717,6 +808,34 @@
                 'unknown': 'UNKNOWN'
             };
             mechaStatus.textContent = statusMap[status.mecha_status] || 'UNKNOWN';
+
+            // Context switching: Show/hide controls based on device type
+            if (status.is_tuner !== undefined && status.is_tuner !== isTuner) {
+                isTuner = status.is_tuner;
+
+                if (isTuner) {
+                    // Show tuner controls, hide media track input
+                    tunerControls.style.display = 'block';
+                    mediaTrackInput.style.display = 'none';
+
+                    // Update info panel labels for tuner
+                    document.querySelector('#totalTracks').previousElementSibling.textContent = 'PRESET';
+                    document.querySelector('#mediaType').previousElementSibling.textContent = 'BAND';
+                } else {
+                    // Show media controls, hide tuner controls
+                    tunerControls.style.display = 'none';
+                    mediaTrackInput.style.display = 'flex';
+
+                    // Restore info panel labels for media
+                    document.querySelector('#totalTracks').previousElementSibling.textContent = 'TRACKS';
+                    document.querySelector('#mediaType').previousElementSibling.textContent = 'MEDIA';
+                }
+
+                // Re-enable controls after switching context
+                if (connected) {
+                    enableControls(true);
+                }
+            }
         }
 
         // Initial status check

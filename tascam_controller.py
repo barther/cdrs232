@@ -96,7 +96,8 @@ class TascamController:
             'repeat_mode': False,
             'resume_mode': False,
             'device': 'CD',
-            'device_name': 'CD'
+            'device_name': 'CD',
+            'is_tuner': False
         }
 
         # Callbacks for status updates
@@ -521,7 +522,7 @@ class TascamController:
             self.send_command('7F', f"01{device_map[device_lower]}")
             self.current_status['device'] = device_lower
 
-            # Update device name
+            # Update device name and type
             device_names = {
                 'sd': 'SD Card',
                 'usb': 'USB',
@@ -533,8 +534,53 @@ class TascamController:
                 'aux': 'AUX Input'
             }
             self.current_status['device_name'] = device_names.get(device_lower, device.upper())
+
+            # Mark if device is a tuner/radio
+            self.current_status['is_tuner'] = device_lower in ['fm', 'am', 'dab']
         else:
             logger.error(f"Invalid device: {device}")
+
+    # Tuner controls (for FM/AM/DAB radio)
+    def tuner_frequency_up(self):
+        """Tune to next frequency/station (for radio sources)"""
+        # Uses track skip command - works as frequency up for tuners
+        self.send_command(self.CMD_TRACK_SKIP, '00')
+
+    def tuner_frequency_down(self):
+        """Tune to previous frequency/station (for radio sources)"""
+        # Uses track skip command - works as frequency down for tuners
+        self.send_command(self.CMD_TRACK_SKIP, '01')
+
+    def tuner_seek_up(self):
+        """Auto-seek next station (for radio sources)"""
+        # Uses search command for auto-seek
+        self.send_command(self.CMD_SEARCH, '00')
+
+    def tuner_seek_down(self):
+        """Auto-seek previous station (for radio sources)"""
+        # Uses search command for auto-seek
+        self.send_command(self.CMD_SEARCH, '01')
+
+    def tuner_preset(self, preset_number: int):
+        """
+        Select tuner preset (for radio sources)
+
+        Args:
+            preset_number: Preset number (1-99)
+        """
+        if not 1 <= preset_number <= 99:
+            logger.error(f"Invalid preset number: {preset_number}")
+            return
+
+        # Uses direct track search command for preset selection
+        # Format: tens, ones, thousands, hundreds
+        thousands = (preset_number // 1000) % 10
+        hundreds = (preset_number // 100) % 10
+        tens = (preset_number // 10) % 10
+        ones = preset_number % 10
+
+        data = f"{tens}{ones}{thousands}{hundreds}"
+        self.send_command(self.CMD_DIRECT_TRACK_SEARCH, data)
 
     def get_status(self) -> Dict[str, Any]:
         """Get current device status"""
