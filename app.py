@@ -250,6 +250,52 @@ def switch_device(device):
     return jsonify({'success': False, 'message': 'Not connected'}), 400
 
 
+# Tuner control endpoints (for FM/AM/DAB radio)
+@app.route('/api/tuner/frequency/up', methods=['POST'])
+def tuner_frequency_up():
+    """Tune frequency up"""
+    if controller and controller.connected:
+        controller.tuner_frequency_up()
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
+@app.route('/api/tuner/frequency/down', methods=['POST'])
+def tuner_frequency_down():
+    """Tune frequency down"""
+    if controller and controller.connected:
+        controller.tuner_frequency_down()
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
+@app.route('/api/tuner/seek/up', methods=['POST'])
+def tuner_seek_up():
+    """Auto-seek next station"""
+    if controller and controller.connected:
+        controller.tuner_seek_up()
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
+@app.route('/api/tuner/seek/down', methods=['POST'])
+def tuner_seek_down():
+    """Auto-seek previous station"""
+    if controller and controller.connected:
+        controller.tuner_seek_down()
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
+@app.route('/api/tuner/preset/<int:preset>', methods=['POST'])
+def tuner_preset(preset):
+    """Select tuner preset"""
+    if controller and controller.connected:
+        controller.tuner_preset(preset)
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'message': 'Not connected'}), 400
+
+
 # WebSocket events
 @socketio.on('connect')
 def handle_connect():
