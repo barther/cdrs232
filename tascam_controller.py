@@ -329,9 +329,12 @@ class TascamController:
             if len(data) >= 10:
                 min_tens = int(data[2])
                 min_ones = int(data[3])
+                min_thousands = int(data[4])
+                min_hundreds = int(data[5])
                 sec_tens = int(data[6])
                 sec_ones = int(data[7])
-                minutes = min_tens * 10 + min_ones
+                # Calculate minutes from all 4 digits (supports >99 minutes)
+                minutes = (min_thousands * 1000) + (min_hundreds * 100) + (min_tens * 10) + min_ones
                 seconds = sec_tens * 10 + sec_ones
                 self.current_status['time_elapsed'] = f"{minutes:02d}:{seconds:02d}"
                 updated = True
@@ -385,9 +388,12 @@ class TascamController:
                 if data[4:10] != '000000':
                     min_tens = int(data[4])
                     min_ones = int(data[5])
+                    min_thousands = int(data[6])
+                    min_hundreds = int(data[7])
                     sec_tens = int(data[8])
                     sec_ones = int(data[9])
-                    minutes = min_tens * 10 + min_ones
+                    # Calculate minutes from all 4 digits (supports >99 minutes)
+                    minutes = (min_thousands * 1000) + (min_hundreds * 100) + (min_tens * 10) + min_ones
                     seconds = sec_tens * 10 + sec_ones
                     self.current_status['total_time'] = f"{minutes:02d}:{seconds:02d}"
                 updated = True
