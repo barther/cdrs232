@@ -472,8 +472,9 @@ class TascamController:
         self.send_command(self.CMD_READY, '01')
 
     def resume(self):
-        """Resume from pause"""
-        self.send_command(self.CMD_READY, '00')
+        """Resume from pause (exit ready mode by playing)"""
+        # READY '00' is invalid per spec, use PLAY to exit ready mode
+        self.send_command(self.CMD_PLAY)
 
     def set_resume_mode(self, enabled: bool):
         """Enable/disable resume play mode"""
@@ -518,8 +519,9 @@ class TascamController:
 
         device_lower = device.lower()
         if device_lower in device_map:
-            # Vendor command format: 7F + category (01) + device code
-            self.send_command('7F', f"01{device_map[device_lower]}")
+            # Vendor command format: 7F01 (command) + device code (data)
+            # Creates: LF 0 7F01 <device_code> CR
+            self.send_command(self.CMD_DEVICE_SELECT, device_map[device_lower])
             self.current_status['device'] = device_lower
 
             # Update device name and type
@@ -566,10 +568,10 @@ class TascamController:
         Select tuner preset (for radio sources)
 
         Args:
-            preset_number: Preset number (1-99)
+            preset_number: Preset number (1-20 per spec)
         """
-        if not 1 <= preset_number <= 99:
-            logger.error(f"Invalid preset number: {preset_number}")
+        if not 1 <= preset_number <= 20:
+            logger.error(f"Invalid preset number: {preset_number} (valid range: 1-20)")
             return
 
         # Uses direct track search command for preset selection

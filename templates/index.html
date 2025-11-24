@@ -428,7 +428,7 @@
             </div>
 
             <div class="track-input-group">
-                <input type="number" class="track-input" id="presetInput" placeholder="Preset #" min="1" max="99" disabled>
+                <input type="number" class="track-input" id="presetInput" placeholder="Preset #" min="1" max="20" disabled>
                 <button class="control-btn" id="btnPreset" disabled style="flex: 0 0 80px;">GO</button>
             </div>
 
@@ -649,8 +649,10 @@
 
         btnPreset.addEventListener('click', () => {
             const preset = parseInt(presetInput.value);
-            if (preset >= 1 && preset <= 99) {
+            if (preset >= 1 && preset <= 20) {
                 sendCommand(`/api/tuner/preset/${preset}`);
+            } else if (preset) {
+                alert('Preset number must be between 1 and 20');
             }
         });
 
