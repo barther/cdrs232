@@ -89,6 +89,12 @@ class TascamController:
         self.cmd_queue = Queue()
         self.last_cmd_time = 0
 
+        # Connection health tracking
+        self.consecutive_failures = 0
+        self.max_failures_before_disconnect = 10  # ~3 seconds of failures
+        self.reconnect_interval = 5.0  # Try reconnecting every 5 seconds
+        self.last_reconnect_attempt = 0
+
         # State tracking
         self.current_status = {
             'mecha_status': 'unknown',
@@ -167,7 +173,30 @@ class TascamController:
             self.serial.close()
 
         self.connected = False
+        self.consecutive_failures = 0
+        self._reset_status()
         logger.info("Disconnected from TASCAM device")
+
+    def _reset_status(self):
+        """Reset status to default values when disconnected"""
+        self.current_status = {
+            'mecha_status': 'unknown',
+            'track_number': 0,
+            'total_tracks': 0,
+            'time_elapsed': '00:00',
+            'time_remaining': '00:00',
+            'total_time': '00:00',
+            'media_present': False,
+            'media_type': 'unknown',
+            'play_mode': 'continuous',
+            'repeat_mode': False,
+            'resume_mode': False,
+            'device': 'CD',
+            'device_name': 'CD',
+            'is_tuner': False
+        }
+        # Notify listeners of status reset
+        self._notify_status_changed()
 
     def _build_command(self, command: str, data: str = '') -> bytes:
         """
@@ -257,14 +286,32 @@ class TascamController:
         return None
 
     def _poll_status(self):
-        """Poll device status periodically"""
+        """Poll device status periodically with auto-reconnect"""
         poll_count = 0
         while self.running:
             try:
+                # If not connected, attempt reconnection
+                if not self.connected:
+                    current_time = time.time()
+                    if current_time - self.last_reconnect_attempt >= self.reconnect_interval:
+                        self.last_reconnect_attempt = current_time
+                        logger.info("Attempting to reconnect to device...")
+                        if self.connect():
+                            logger.info("Reconnected successfully!")
+                            self.consecutive_failures = 0
+                        else:
+                            logger.debug("Reconnection failed, will retry...")
+                    time.sleep(1.0)
+                    continue
+
                 # Read any incoming responses
                 response = self._read_response()
+                got_response = False
+
                 if response:
                     self._handle_response(*response)
+                    got_response = True
+                    self.consecutive_failures = 0  # Reset on successful response
 
                 # Poll status
                 self.send_command(self.CMD_MECHA_STATUS_SENSE)
@@ -287,12 +334,25 @@ class TascamController:
                     # Query current device
                     self.send_command(self.CMD_DEVICE_SELECT, 'FF')
 
+                # Track health: if we didn't get a response, increment failure count
+                if not got_response:
+                    self.consecutive_failures += 1
+                    if self.consecutive_failures >= self.max_failures_before_disconnect:
+                        logger.warning(f"Device not responding ({self.consecutive_failures} consecutive failures). Auto-disconnecting...")
+                        self.disconnect()
+                        continue
+
                 poll_count += 1
                 time.sleep(self.STATUS_POLL_INTERVAL)
 
             except Exception as e:
                 logger.error(f"Status polling error: {e}")
-                time.sleep(1.0)
+                self.consecutive_failures += 1
+                if self.consecutive_failures >= self.max_failures_before_disconnect:
+                    logger.warning("Too many errors. Auto-disconnecting...")
+                    self.disconnect()
+                else:
+                    time.sleep(1.0)
 
     def _handle_response(self, command: str, data: str):
         """Handle response from device"""
