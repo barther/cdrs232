@@ -539,10 +539,10 @@ class TascamController:
 
     def switch_device(self, device: str):
         """
-        Switch input source/device
+        Switch input source/device (CD-400U)
 
         Args:
-            device: One of 'cd', 'usb', 'sd', 'bluetooth', 'fm', 'am', 'dab', 'aux'
+            device: One of 'cd', 'usb', 'sd', 'bluetooth', 'fm', 'am', 'aux'
         """
         device_map = {
             'sd': '00',
@@ -550,7 +550,6 @@ class TascamController:
             'cd': '11',
             'bluetooth': '20',
             'fm': '30',
-            'dab': '30',
             'am': '31',
             'aux': '40'
         }
@@ -569,18 +568,17 @@ class TascamController:
                 'cd': 'CD',
                 'bluetooth': 'Bluetooth',
                 'fm': 'FM Radio',
-                'dab': 'DAB Radio',
                 'am': 'AM Radio',
                 'aux': 'AUX Input'
             }
             self.current_status['device_name'] = device_names.get(device_lower, device.upper())
 
             # Mark if device is a tuner/radio
-            self.current_status['is_tuner'] = device_lower in ['fm', 'am', 'dab']
+            self.current_status['is_tuner'] = device_lower in ['fm', 'am']
         else:
             logger.error(f"Invalid device: {device}")
 
-    # Tuner controls (for FM/AM/DAB radio)
+    # Tuner controls (for FM/AM radio)
     def tuner_frequency_up(self):
         """Tune to next frequency/station (for radio sources)"""
         # Uses track skip command - works as frequency up for tuners
