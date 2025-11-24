@@ -29,17 +29,23 @@ class TascamController:
     CMD_RESUME_PLAY_SELECT = '34'
     CMD_REPEAT_SELECT = '37'
     CMD_INCR_PLAY_SELECT = '3A'
+    CMD_CLEAR = '4A'  # Clear/dismiss message (like NO button)
+    CMD_REMOTE_LOCAL_SELECT = '4C'
     CMD_PLAY_MODE_SELECT = '4D'
     CMD_PLAY_MODE_SENSE = '4E'
-    CMD_REMOTE_LOCAL_SELECT = '4C'
     CMD_MECHA_STATUS_SENSE = '50'
     CMD_TRACK_NO_SENSE = '55'
     CMD_MEDIA_STATUS_SENSE = '56'
     CMD_CURRENT_TRACK_INFO_SENSE = '57'
     CMD_CURRENT_TRACK_TIME_SENSE = '58'
+    CMD_TOTAL_TRACK_TIME_SENSE = '5D'  # Get total tracks and total time
     CMD_ERROR_SENSE = '78'
     CMD_CAUTION_SENSE = '79'
-    CMD_DEVICE_SELECT = '7F01'
+
+    # Vendor commands (7F prefix)
+    CMD_DEVICE_SELECT = '7F01'  # Device/source selection
+    CMD_ENTER = '7F7049'  # ENTER button (menu navigation/confirm)
+    CMD_BACK = '7F704A'  # BACK button (menu navigation)
 
     # Return command codes
     RET_INFORMATION = '8F'
@@ -49,6 +55,7 @@ class TascamController:
     RET_MEDIA_STATUS = 'D6'
     RET_CURRENT_TRACK_INFO = 'D7'
     RET_CURRENT_TRACK_TIME = 'D8'
+    RET_TOTAL_TRACK_TIME = 'DD'  # Return for total tracks/time query
     RET_ERROR_SENSE_REQUEST = 'F0'
     RET_CAUTION_SENSE_REQUEST = 'F1'
     RET_ILLEGAL_STATUS = 'F2'
@@ -121,7 +128,7 @@ class TascamController:
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE,
                 timeout=0.1,
-                rtscts=True  # Hardware flow control
+                rtscts=False  # No real flow control - pins 7&8 are shorted internally
             )
             self.connected = True
             self.running = True
@@ -136,8 +143,9 @@ class TascamController:
 
             logger.info(f"Connected to TASCAM device on {self.port} at {self.baudrate} baud")
 
-            # Set to remote control mode
-            self._send_command_now(self.CMD_REMOTE_LOCAL_SELECT, '00')
+            # Set to remote control mode (enable both remote AND front panel)
+            # '01' = remote + front panel enabled (best for church use)
+            self._send_command_now(self.CMD_REMOTE_LOCAL_SELECT, '01')
 
             return True
 
@@ -272,6 +280,8 @@ class TascamController:
                     time.sleep(0.1)
                     self.send_command(self.CMD_CURRENT_TRACK_INFO_SENSE)
                     time.sleep(0.1)
+                    self.send_command(self.CMD_TOTAL_TRACK_TIME_SENSE)
+                    time.sleep(0.1)
                     self.send_command(self.CMD_PLAY_MODE_SENSE)
                     time.sleep(0.1)
                     # Query current device
@@ -358,6 +368,28 @@ class TascamController:
                     '06': 'random'
                 }
                 self.current_status['play_mode'] = mode_map.get(data[:2], 'continuous')
+                updated = True
+
+        elif command == self.RET_TOTAL_TRACK_TIME:
+            # Parse total tracks and total time (12 bytes)
+            if len(data) >= 12:
+                # Total tracks (bytes 0-3: tens, ones, thousands, hundreds)
+                tens = int(data[0])
+                ones = int(data[1])
+                thousands = int(data[2])
+                hundreds = int(data[3])
+                total_tracks = thousands * 1000 + hundreds * 100 + tens * 10 + ones
+                self.current_status['total_tracks'] = total_tracks
+
+                # Total time (bytes 4-9: not supported for Data-CD/USB/SD)
+                if data[4:10] != '000000':
+                    min_tens = int(data[4])
+                    min_ones = int(data[5])
+                    sec_tens = int(data[8])
+                    sec_ones = int(data[9])
+                    minutes = min_tens * 10 + min_ones
+                    seconds = sec_tens * 10 + sec_ones
+                    self.current_status['total_time'] = f"{minutes:02d}:{seconds:02d}"
                 updated = True
 
         elif command == self.RET_CHANGE_STATUS:
@@ -583,6 +615,23 @@ class TascamController:
 
         data = f"{tens}{ones}{thousands}{hundreds}"
         self.send_command(self.CMD_DIRECT_TRACK_SEARCH, data)
+
+    # Additional utility commands
+    def clear(self):
+        """Clear/dismiss message or dialog (like NO button)"""
+        self.send_command(self.CMD_CLEAR)
+
+    def enter(self):
+        """Send ENTER command (menu navigation/confirmation)"""
+        self.send_command(self.CMD_ENTER, '01')
+
+    def back(self):
+        """Send BACK command (menu navigation)"""
+        self.send_command(self.CMD_BACK, '01')
+
+    def get_total_info(self):
+        """Request total tracks and total time from disc/media"""
+        self.send_command(self.CMD_TOTAL_TRACK_TIME_SENSE)
 
     def get_status(self) -> Dict[str, Any]:
         """Get current device status"""
