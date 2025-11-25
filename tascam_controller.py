@@ -84,12 +84,12 @@ class TascamController:
     # Allowed baud rates per TASCAM RS-232C spec
     VALID_BAUDRATES = [4800, 9600, 19200, 38400, 57600]
 
-    def __init__(self, port: str = '/dev/ttyUSB0', baudrate: int = 9600):
+    def __init__(self, port: str = '/dev/serial/by-id/usb-FTDI_USB_Serial_Converter_FTEM3Y6M-if00-port0', baudrate: int = 9600):
         """
         Initialize TASCAM controller
 
         Args:
-            port: Serial port path (e.g., '/dev/ttyUSB0')
+            port: Serial port path (persistent by-id path recommended)
             baudrate: Baud rate (4800, 9600, 19200, 38400, 57600)
 
         Raises:
