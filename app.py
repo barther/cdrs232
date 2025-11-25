@@ -324,7 +324,9 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='TASCAM CD-400U Web Controller')
     parser.add_argument('--host', default='0.0.0.0', help='Host to bind to')
     parser.add_argument('--port', type=int, default=5000, help='Port to bind to')
-    parser.add_argument('--serial-port', default='/dev/ttyUSB0', help='Serial port')
+    parser.add_argument('--serial-port',
+                        default='/dev/serial/by-id/usb-FTDI_USB_Serial_Converter_FTEM3Y6M-if00-port0',
+                        help='Serial port (using persistent by-id path)')
     parser.add_argument('--baudrate', type=int, default=9600, help='Baud rate')
     parser.add_argument('--auto-connect', action='store_true', help='Auto-connect on startup')
 
