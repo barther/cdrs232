@@ -224,7 +224,7 @@ class TascamController:
             'caution_status': None
         }
         # Notify listeners of status reset
-        self._notify_status_changed()
+        self._notify_callbacks()
 
     def _build_command(self, command: str, data: str = '') -> bytes:
         """
