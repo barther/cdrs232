@@ -79,7 +79,7 @@ class TascamController:
     # Timing constants (in seconds)
     CMD_INTERVAL = 0.1  # 100ms minimum between commands
     RESPONSE_TIMEOUT = 0.5  # 500ms for response
-    STATUS_POLL_INTERVAL = 0.3  # 300ms for status polling
+    STATUS_POLL_INTERVAL = 0.15  # 150ms for status polling (faster updates)
 
     # Allowed baud rates per TASCAM RS-232C spec
     VALID_BAUDRATES = [4800, 9600, 19200, 38400, 57600]
@@ -598,10 +598,15 @@ class TascamController:
                     logger.info(f"Device cautions: {', '.join(cautions)}")
 
         elif command == self.RET_CHANGE_STATUS:
-            # F6: Status changed - trigger immediate poll
-            logger.info("Status changed notification received")
-            # Query device to update status
+            # F6: Status changed - trigger immediate poll and broadcast
+            logger.debug("Status changed notification received - forcing update")
+            # Query critical status immediately
+            self.send_command(self.CMD_MECHA_STATUS_SENSE)
+            time.sleep(0.05)
+            self.send_command(self.CMD_TRACK_NO_SENSE)
+            time.sleep(0.05)
             self.send_command(self.CMD_DEVICE_SELECT, 'FF')
+            updated = True  # Force broadcast on status change
 
         elif command == self.RET_ERROR_SENSE_REQUEST:
             # F0: Error occurred - query error details
@@ -614,9 +619,9 @@ class TascamController:
         elif command == self.RET_ILLEGAL_STATUS:
             logger.warning("Illegal command/status received")
 
-        # Notify callbacks if status updated
-        if updated:
-            self._notify_callbacks()
+        # Always broadcast status to keep UI in sync (not just when updated)
+        # This ensures the UI shows current state even during rapid changes
+        self._notify_callbacks()
 
     def _notify_callbacks(self):
         """Notify all registered callbacks of status update"""
