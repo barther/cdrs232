@@ -378,28 +378,54 @@
             <h3 class="section-title">Transport Controls</h3>
             <!-- Primary Play/Pause button (full width) -->
             <button class="control-btn primary" id="btnPlay" disabled style="width: 100%; margin-bottom: 10px;">
-                ▶ PLAY
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                    <path d="M3 2l10 6-10 6V2z"/>
+                </svg>
+                PLAY
             </button>
 
             <!-- Transport controls (2 columns) -->
             <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
                 <button class="control-btn" id="btnStop" disabled>
-                    ⏹ STOP
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                        <rect x="3" y="3" width="10" height="10"/>
+                    </svg>
+                    STOP
                 </button>
                 <button class="control-btn" id="btnEject" disabled>
-                    ⏏ EJECT
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                        <path d="M8 2L3 8h10L8 2z"/>
+                        <rect x="3" y="10" width="10" height="2"/>
+                    </svg>
+                    EJECT
                 </button>
                 <button class="control-btn" id="btnPrev" disabled>
-                    ⏮ PREV
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                        <rect x="2" y="3" width="2" height="10"/>
+                        <path d="M12 3L6 8l6 5V3z"/>
+                    </svg>
+                    PREV
                 </button>
                 <button class="control-btn" id="btnNext" disabled>
-                    ⏭ NEXT
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                        <path d="M4 3l6 5-6 5V3z"/>
+                        <rect x="12" y="3" width="2" height="10"/>
+                    </svg>
+                    NEXT
                 </button>
                 <button class="control-btn" id="btnRew" disabled>
-                    ⏪ REW
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                        <path d="M9 3L3 8l6 5V3z"/>
+                        <path d="M15 3L9 8l6 5V3z"/>
+                    </svg>
+                    REW
                 </button>
                 <button class="control-btn" id="btnFwd" disabled>
-                    ⏩ FWD
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                        <path d="M1 3l6 5-6 5V3z"/>
+                        <path d="M7 3l6 5-6 5V3z"/>
+                    </svg>
+                    FWD
                 </button>
             </div>
 
@@ -414,16 +440,30 @@
             <h3 class="section-title">Tuner Controls</h3>
             <div class="transport-controls">
                 <button class="control-btn" id="btnTuneDown" disabled>
-                    ◀ TUNE DOWN
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                        <path d="M11 3L5 8l6 5V3z"/>
+                    </svg>
+                    TUNE DOWN
                 </button>
                 <button class="control-btn" id="btnTuneUp" disabled>
-                    TUNE UP ▶
+                    TUNE UP
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-left: 4px;">
+                        <path d="M5 3l6 5-6 5V3z"/>
+                    </svg>
                 </button>
                 <button class="control-btn" id="btnSeekDown" disabled>
-                    ⏪ SEEK ◀
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;">
+                        <path d="M9 3L3 8l6 5V3z"/>
+                        <path d="M15 3L9 8l6 5V3z"/>
+                    </svg>
+                    SEEK DOWN
                 </button>
                 <button class="control-btn" id="btnSeekUp" disabled>
-                    ▶ SEEK ⏩
+                    SEEK UP
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-left: 4px;">
+                        <path d="M1 3l6 5-6 5V3z"/>
+                        <path d="M7 3l6 5-6 5V3z"/>
+                    </svg>
                 </button>
             </div>
 
@@ -856,9 +896,9 @@
 
             // Update play button text based on state
             if (currentMechaStatus === 'play' || currentMechaStatus === 'search_forward' || currentMechaStatus === 'search_backward') {
-                btnPlay.innerHTML = '⏸ PAUSE';
+                btnPlay.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><rect x="3" y="3" width="3" height="10"/><rect x="10" y="3" width="3" height="10"/></svg> PAUSE';
             } else {
-                btnPlay.innerHTML = '▶ PLAY';
+                btnPlay.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style="vertical-align: middle; margin-right: 4px;"><path d="M3 2l10 6-10 6V2z"/></svg> PLAY';
             }
 
             // Context switching: Show/hide controls based on device type
