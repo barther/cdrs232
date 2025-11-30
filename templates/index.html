@@ -376,27 +376,30 @@
 
         <div class="controls-section">
             <h3 class="section-title">Transport Controls</h3>
-            <div class="transport-controls">
-                <button class="control-btn primary" id="btnPlay" disabled>
-                    ▶ PLAY
-                </button>
+            <!-- Primary Play/Pause button (full width) -->
+            <button class="control-btn primary" id="btnPlay" disabled style="width: 100%; margin-bottom: 10px;">
+                ▶ PLAY
+            </button>
+
+            <!-- Transport controls (2 columns) -->
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
                 <button class="control-btn" id="btnStop" disabled>
                     ⏹ STOP
                 </button>
                 <button class="control-btn" id="btnEject" disabled>
                     ⏏ EJECT
                 </button>
-                <button class="control-btn" id="btnRew" disabled>
-                    ⏪ REW
-                </button>
-                <button class="control-btn" id="btnFwd" disabled>
-                    ⏩ FWD
-                </button>
                 <button class="control-btn" id="btnPrev" disabled>
                     ⏮ PREV
                 </button>
                 <button class="control-btn" id="btnNext" disabled>
                     ⏭ NEXT
+                </button>
+                <button class="control-btn" id="btnRew" disabled>
+                    ⏪ REW
+                </button>
+                <button class="control-btn" id="btnFwd" disabled>
+                    ⏩ FWD
                 </button>
             </div>
 
