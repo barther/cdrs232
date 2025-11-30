@@ -184,7 +184,7 @@ class TascamController:
             return False
 
     def disconnect(self):
-        """Disconnect from the TASCAM device"""
+        """Disconnect from the TASCAM device (user-initiated)"""
         self.running = False
 
         if self.cmd_thread:
@@ -199,6 +199,16 @@ class TascamController:
         self.consecutive_failures = 0
         self._reset_status()
         logger.info("Disconnected from TASCAM device")
+
+    def _auto_disconnect(self):
+        """Auto-disconnect when device stops responding (keeps threads alive for reconnect)"""
+        if self.serial and self.serial.is_open:
+            self.serial.close()
+
+        self.connected = False
+        self.consecutive_failures = 0
+        self._reset_status()
+        logger.warning("Auto-disconnected: Device not responding (will retry every 5s)")
 
     def _reset_status(self):
         """Reset status to default values when disconnected"""
@@ -378,7 +388,7 @@ class TascamController:
                     self.consecutive_failures += 1
                     if self.consecutive_failures >= self.max_failures_before_disconnect:
                         logger.warning(f"Device not responding ({self.consecutive_failures} consecutive failures). Auto-disconnecting...")
-                        self.disconnect()
+                        self._auto_disconnect()
                         continue
 
                 poll_count += 1
@@ -389,7 +399,7 @@ class TascamController:
                 self.consecutive_failures += 1
                 if self.consecutive_failures >= self.max_failures_before_disconnect:
                     logger.warning("Too many errors. Auto-disconnecting...")
-                    self.disconnect()
+                    self._auto_disconnect()
                 else:
                     time.sleep(1.0)
 

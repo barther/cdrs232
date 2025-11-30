@@ -376,24 +376,18 @@
 
         <div class="controls-section">
             <h3 class="section-title">Transport Controls</h3>
-            <div class="transport-controls">
-                <button class="control-btn primary" id="btnPlay" disabled>
-                    ▶ PLAY
-                </button>
-                <button class="control-btn" id="btnPause" disabled>
-                    ⏸ PAUSE
-                </button>
+            <!-- Primary Play/Pause button (full width) -->
+            <button class="control-btn primary" id="btnPlay" disabled style="width: 100%; margin-bottom: 10px;">
+                ▶ PLAY
+            </button>
+
+            <!-- Transport controls (2 columns) -->
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
                 <button class="control-btn" id="btnStop" disabled>
                     ⏹ STOP
                 </button>
                 <button class="control-btn" id="btnEject" disabled>
                     ⏏ EJECT
-                </button>
-                <button class="control-btn" id="btnRew" disabled>
-                    ⏪ REW
-                </button>
-                <button class="control-btn" id="btnFwd" disabled>
-                    ⏩ FWD
                 </button>
                 <button class="control-btn" id="btnPrev" disabled>
                     ⏮ PREV
@@ -401,11 +395,17 @@
                 <button class="control-btn" id="btnNext" disabled>
                     ⏭ NEXT
                 </button>
+                <button class="control-btn" id="btnRew" disabled>
+                    ⏪ REW
+                </button>
+                <button class="control-btn" id="btnFwd" disabled>
+                    ⏩ FWD
+                </button>
             </div>
 
-            <div class="track-input-group" id="mediaTrackInput">
-                <input type="number" class="track-input" id="trackInput" placeholder="Track #" min="1" max="999" disabled>
-                <button class="control-btn" id="btnGoto" disabled style="flex: 0 0 80px;">GO</button>
+            <!-- Track Grid (dynamically populated - 2 columns, N rows) -->
+            <div id="trackGrid" class="track-input-group" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+                <!-- Populated dynamically based on total_tracks -->
             </div>
         </div>
 
@@ -506,19 +506,16 @@
         const deviceName = document.getElementById('deviceName');
 
         const btnPlay = document.getElementById('btnPlay');
-        const btnPause = document.getElementById('btnPause');
         const btnStop = document.getElementById('btnStop');
         const btnEject = document.getElementById('btnEject');
         const btnRew = document.getElementById('btnRew');
         const btnFwd = document.getElementById('btnFwd');
         const btnPrev = document.getElementById('btnPrev');
         const btnNext = document.getElementById('btnNext');
-        const btnGoto = document.getElementById('btnGoto');
-        const trackInput = document.getElementById('trackInput');
+        const trackGrid = document.getElementById('trackGrid');
 
         // Tuner controls
         const tunerControls = document.getElementById('tunerControls');
-        const mediaTrackInput = document.getElementById('mediaTrackInput');
         const btnTuneUp = document.getElementById('btnTuneUp');
         const btnTuneDown = document.getElementById('btnTuneDown');
         const btnSeekUp = document.getElementById('btnSeekUp');
@@ -573,9 +570,18 @@
             }
         });
 
-        // Transport controls
-        btnPlay.addEventListener('click', () => sendCommand('/api/play'));
-        btnPause.addEventListener('click', () => sendCommand('/api/pause'));
+        // Transport controls - Play button is smart toggle
+        let currentMechaStatus = 'unknown';
+        btnPlay.addEventListener('click', () => {
+            // Smart play/pause toggle based on current state
+            if (currentMechaStatus === 'play' || currentMechaStatus === 'search_forward' || currentMechaStatus === 'search_backward') {
+                // Currently playing → pause
+                sendCommand('/api/pause');
+            } else {
+                // Stopped, paused, or ready → play
+                sendCommand('/api/play');
+            }
+        });
         btnStop.addEventListener('click', () => sendCommand('/api/stop'));
         btnEject.addEventListener('click', () => sendCommand('/api/eject'));
         btnPrev.addEventListener('click', () => sendCommand('/api/previous'));
@@ -605,18 +611,44 @@
         });
         btnFwd.addEventListener('touchend', () => sendCommand('/api/search/stop'));
 
-        btnGoto.addEventListener('click', () => {
-            const track = parseInt(trackInput.value);
-            if (track >= 1 && track <= 999) {
-                sendCommand(`/api/track/${track}`);
-            }
-        });
+        // Track grid population
+        let currentTotalTracks = 0;
+        let currentTrackNumber = 0;
 
-        trackInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                btnGoto.click();
+        function populateTrackGrid(total) {
+            if (total === currentTotalTracks) return; // Don't rebuild if same
+
+            currentTotalTracks = total;
+            trackGrid.innerHTML = '';  // Clear existing
+
+            if (total === 0) return;
+
+            // Create track buttons (2 rows)
+            const tracksPerRow = Math.ceil(total / 2);
+
+            for (let i = 1; i <= total; i++) {
+                const btn = document.createElement('button');
+                btn.className = 'mode-btn';
+                btn.textContent = i;
+                btn.dataset.track = i;
+                btn.addEventListener('click', () => {
+                    sendCommand(`/api/track/${i}`);
+                });
+                trackGrid.appendChild(btn);
             }
-        });
+        }
+
+        function updateTrackHighlight(currentTrack) {
+            currentTrackNumber = currentTrack;
+            // Highlight current track
+            trackGrid.querySelectorAll('.mode-btn').forEach(btn => {
+                if (parseInt(btn.dataset.track) === currentTrack) {
+                    btn.classList.add('active');
+                } else {
+                    btn.classList.remove('active');
+                }
+            });
+        }
 
         // Mode selection
         modeBtns.forEach(btn => {
@@ -723,15 +755,17 @@
         // Enable/disable controls
         function enableControls(enabled) {
             btnPlay.disabled = !enabled;
-            btnPause.disabled = !enabled;
             btnStop.disabled = !enabled;
             btnEject.disabled = !enabled;
             btnRew.disabled = !enabled;
             btnFwd.disabled = !enabled;
             btnPrev.disabled = !enabled;
             btnNext.disabled = !enabled;
-            btnGoto.disabled = !enabled;
-            trackInput.disabled = !enabled;
+
+            // Enable/disable track grid buttons
+            trackGrid.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.disabled = !enabled;
+            });
 
             // Tuner controls
             if (isTuner) {
@@ -777,11 +811,18 @@
             // Time
             timeDisplay.textContent = status.time_elapsed || '00:00';
 
-            // Disc info
+            // Disc info and track grid
             if (status.total_tracks > 0) {
                 totalTracks.textContent = status.total_tracks;
+                populateTrackGrid(status.total_tracks);
             } else {
                 totalTracks.textContent = '--';
+                populateTrackGrid(0);
+            }
+
+            // Highlight current track in grid
+            if (status.track_number > 0) {
+                updateTrackHighlight(status.track_number);
             }
 
             // Media type
@@ -810,14 +851,24 @@
             };
             mechaStatus.textContent = statusMap[status.mecha_status] || 'UNKNOWN';
 
+            // Update current mecha status for smart play button
+            currentMechaStatus = status.mecha_status;
+
+            // Update play button text based on state
+            if (currentMechaStatus === 'play' || currentMechaStatus === 'search_forward' || currentMechaStatus === 'search_backward') {
+                btnPlay.innerHTML = '⏸ PAUSE';
+            } else {
+                btnPlay.innerHTML = '▶ PLAY';
+            }
+
             // Context switching: Show/hide controls based on device type
             if (status.is_tuner !== undefined && status.is_tuner !== isTuner) {
                 isTuner = status.is_tuner;
 
                 if (isTuner) {
-                    // Show tuner controls, hide media track input
+                    // Show tuner controls, hide media track grid
                     tunerControls.style.display = 'block';
-                    mediaTrackInput.style.display = 'none';
+                    trackGrid.style.display = 'none';
 
                     // Update info panel labels for tuner
                     document.querySelector('#totalTracks').previousElementSibling.textContent = 'PRESET';
@@ -825,7 +876,7 @@
                 } else {
                     // Show media controls, hide tuner controls
                     tunerControls.style.display = 'none';
-                    mediaTrackInput.style.display = 'flex';
+                    trackGrid.style.display = 'grid';
 
                     // Restore info panel labels for media
                     document.querySelector('#totalTracks').previousElementSibling.textContent = 'TRACKS';
