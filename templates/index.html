@@ -380,9 +380,6 @@
                 <button class="control-btn primary" id="btnPlay" disabled>
                     ▶ PLAY
                 </button>
-                <button class="control-btn" id="btnPause" disabled>
-                    ⏸ PAUSE
-                </button>
                 <button class="control-btn" id="btnStop" disabled>
                     ⏹ STOP
                 </button>
@@ -506,7 +503,6 @@
         const deviceName = document.getElementById('deviceName');
 
         const btnPlay = document.getElementById('btnPlay');
-        const btnPause = document.getElementById('btnPause');
         const btnStop = document.getElementById('btnStop');
         const btnEject = document.getElementById('btnEject');
         const btnRew = document.getElementById('btnRew');
@@ -573,9 +569,18 @@
             }
         });
 
-        // Transport controls
-        btnPlay.addEventListener('click', () => sendCommand('/api/play'));
-        btnPause.addEventListener('click', () => sendCommand('/api/pause'));
+        // Transport controls - Play button is smart toggle
+        let currentMechaStatus = 'unknown';
+        btnPlay.addEventListener('click', () => {
+            // Smart play/pause toggle based on current state
+            if (currentMechaStatus === 'play' || currentMechaStatus === 'search_forward' || currentMechaStatus === 'search_backward') {
+                // Currently playing → pause
+                sendCommand('/api/pause');
+            } else {
+                // Stopped, paused, or ready → play
+                sendCommand('/api/play');
+            }
+        });
         btnStop.addEventListener('click', () => sendCommand('/api/stop'));
         btnEject.addEventListener('click', () => sendCommand('/api/eject'));
         btnPrev.addEventListener('click', () => sendCommand('/api/previous'));
@@ -723,7 +728,6 @@
         // Enable/disable controls
         function enableControls(enabled) {
             btnPlay.disabled = !enabled;
-            btnPause.disabled = !enabled;
             btnStop.disabled = !enabled;
             btnEject.disabled = !enabled;
             btnRew.disabled = !enabled;
@@ -809,6 +813,16 @@
                 'unknown': 'UNKNOWN'
             };
             mechaStatus.textContent = statusMap[status.mecha_status] || 'UNKNOWN';
+
+            // Update current mecha status for smart play button
+            currentMechaStatus = status.mecha_status;
+
+            // Update play button text based on state
+            if (currentMechaStatus === 'play' || currentMechaStatus === 'search_forward' || currentMechaStatus === 'search_backward') {
+                btnPlay.innerHTML = '⏸ PAUSE';
+            } else {
+                btnPlay.innerHTML = '▶ PLAY';
+            }
 
             // Context switching: Show/hide controls based on device type
             if (status.is_tuner !== undefined && status.is_tuner !== isTuner) {
