@@ -77,6 +77,12 @@ def connect():
             'message': 'Invalid baudrate. Must be an integer.'
         }), 400
 
+    if baudrate not in TascamController.VALID_BAUDRATES:
+        return jsonify({
+            'success': False,
+            'message': f'Invalid baudrate. Must be one of: {", ".join(map(str, TascamController.VALID_BAUDRATES))}'
+        }), 400
+
     try:
         if controller:
             controller.disconnect()
@@ -95,6 +101,12 @@ def connect():
                 'message': 'Failed to connect to device'
             }), 500
 
+    except ValueError as e:
+        logger.error(f"Connection validation error: {e}")
+        return jsonify({
+            'success': False,
+            'message': str(e)
+        }), 400
     except Exception as e:
         logger.error(f"Connection error: {e}")
         return jsonify({

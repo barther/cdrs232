@@ -150,6 +150,10 @@ class TascamController:
     def _open_serial_connection(self) -> bool:
         """Open serial connection without starting worker threads."""
         try:
+            # Clean up stale serial handle before opening a new one.
+            if self.serial and self.serial.is_open:
+                self.serial.close()
+
             self.serial = serial.Serial(
                 port=self.port,
                 baudrate=self.baudrate,
@@ -160,6 +164,7 @@ class TascamController:
                 rtscts=False  # No real flow control - pins 7&8 are shorted internally
             )
             self.connected = True
+            self.response_buffer = bytearray()
             return True
 
         except Exception as e:
@@ -169,7 +174,7 @@ class TascamController:
 
     def connect(self) -> bool:
         """Connect to the TASCAM device and start worker threads once."""
-        if self.connected:
+        if self.connected and self.serial and self.serial.is_open:
             return True
 
         if not self._open_serial_connection():
