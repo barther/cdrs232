@@ -68,6 +68,15 @@ def connect():
     port = data.get('port', '/dev/ttyUSB0')
     baudrate = data.get('baudrate', 9600)
 
+    # Parse user input defensively so invalid values return 400 instead of 500.
+    try:
+        baudrate = int(baudrate)
+    except (TypeError, ValueError):
+        return jsonify({
+            'success': False,
+            'message': 'Invalid baudrate. Must be an integer.'
+        }), 400
+
     try:
         if controller:
             controller.disconnect()

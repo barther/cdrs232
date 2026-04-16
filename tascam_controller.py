@@ -147,8 +147,8 @@ class TascamController:
         # Response buffer
         self.response_buffer = bytearray()
 
-    def connect(self) -> bool:
-        """Connect to the TASCAM device"""
+    def _open_serial_connection(self) -> bool:
+        """Open serial connection without starting worker threads."""
         try:
             self.serial = serial.Serial(
                 port=self.port,
@@ -160,28 +160,35 @@ class TascamController:
                 rtscts=False  # No real flow control - pins 7&8 are shorted internally
             )
             self.connected = True
-            self.running = True
-
-            # Start command processing thread
-            self.cmd_thread = threading.Thread(target=self._process_commands, daemon=True)
-            self.cmd_thread.start()
-
-            # Start status polling thread
-            self.poll_thread = threading.Thread(target=self._poll_status, daemon=True)
-            self.poll_thread.start()
-
-            logger.info(f"Connected to TASCAM device on {self.port} at {self.baudrate} baud")
-
-            # Set to remote control mode (enable both remote AND front panel)
-            # '01' = remote + front panel enabled (best for church use)
-            self._send_command_now(self.CMD_REMOTE_LOCAL_SELECT, '01')
-
             return True
 
         except Exception as e:
             logger.error(f"Failed to connect: {e}")
             self.connected = False
             return False
+
+    def connect(self) -> bool:
+        """Connect to the TASCAM device and start worker threads once."""
+        if self.connected:
+            return True
+
+        if not self._open_serial_connection():
+            return False
+
+        # Start background workers once (prevents duplicate threads on reconnect)
+        if not self.running:
+            self.running = True
+            self.cmd_thread = threading.Thread(target=self._process_commands, daemon=True)
+            self.cmd_thread.start()
+            self.poll_thread = threading.Thread(target=self._poll_status, daemon=True)
+            self.poll_thread.start()
+
+        logger.info(f"Connected to TASCAM device on {self.port} at {self.baudrate} baud")
+
+        # Set to remote control mode (enable both remote AND front panel)
+        # '01' = remote + front panel enabled (best for church use)
+        self._send_command_now(self.CMD_REMOTE_LOCAL_SELECT, '01')
+        return True
 
     def disconnect(self):
         """Disconnect from the TASCAM device (user-initiated)"""
@@ -334,7 +341,9 @@ class TascamController:
                     if current_time - self.last_reconnect_attempt >= self.reconnect_interval:
                         self.last_reconnect_attempt = current_time
                         logger.info("Attempting to reconnect to device...")
-                        if self.connect():
+                        if self._open_serial_connection():
+                            # Re-apply remote/local mode after reconnect
+                            self._send_command_now(self.CMD_REMOTE_LOCAL_SELECT, '01')
                             logger.info("Reconnected successfully!")
                             self.consecutive_failures = 0
                         else:
