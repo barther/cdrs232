@@ -204,6 +204,8 @@ class TascamController:
         if self.poll_thread:
             self.poll_thread.join(timeout=1.0)
 
+        self.status_callbacks.clear()
+
         if self.serial and self.serial.is_open:
             self.serial.close()
 
@@ -649,6 +651,8 @@ class TascamController:
 
     def _notify_callbacks(self):
         """Notify all registered callbacks of status update"""
+        if not self.running:
+            return
         for callback in self.status_callbacks:
             try:
                 callback(self.current_status.copy())

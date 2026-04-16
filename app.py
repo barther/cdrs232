@@ -3,11 +3,17 @@ TASCAM CD-400U Web Control Interface
 Flask application with WebSocket support
 """
 
+import os
+import atexit
+import signal
+import sys
+from functools import wraps
+from threading import RLock
+
 from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 import logging
-import json
 from tascam_controller import TascamController
 
 # Configure logging
@@ -19,24 +25,80 @@ logger = logging.getLogger(__name__)
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'tascam-cd400u-secret-key-change-in-production'
-CORS(app)
+app.config['SECRET_KEY'] = os.environ.get('TASCAM_SECRET_KEY', 'tascam-cd400u-dev-key')
+cors_origins = os.environ.get('TASCAM_CORS_ORIGINS', '*')
+CORS(app, origins=cors_origins.split(',') if cors_origins != '*' else '*')
 
 # Initialize SocketIO
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+socketio = SocketIO(
+    app,
+    cors_allowed_origins=cors_origins if cors_origins == '*' else cors_origins.split(','),
+    async_mode='threading'
+)
 
-# Global controller instance
+# Global controller instance with lock
 controller: TascamController = None
+controller_lock = RLock()
+
+
+# --- Helpers ---
+
+def parse_bool(value, default=False):
+    """Normalize a JSON value to bool (handles string 'false' truthiness bug)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in ('true', '1', 'yes')
+    return default
+
+
+def require_connection(f):
+    """Decorator: acquires controller lock, checks connection, wraps errors."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        with controller_lock:
+            if not controller or not controller.connected:
+                return jsonify({'success': False, 'message': 'Not connected'}), 400
+            try:
+                return f(*args, **kwargs)
+            except Exception as e:
+                logger.error(f"{f.__name__} failed: {e}")
+                return jsonify({'success': False, 'message': str(e)}), 500
+    return decorated
 
 
 def status_callback(status: dict):
     """Callback for status updates from controller"""
     try:
-        socketio.emit('status_update', status, broadcast=True)
+        socketio.emit('status_update', status)
         logger.debug(f"Status update broadcast: {status}")
     except Exception as e:
         logger.error(f"Failed to broadcast status: {e}")
 
+
+def cleanup():
+    """Graceful shutdown: disconnect controller if active."""
+    global controller
+    with controller_lock:
+        if controller:
+            logger.info("Shutting down: disconnecting controller...")
+            controller.disconnect()
+            controller = None
+
+atexit.register(cleanup)
+
+
+def signal_handler(sig, frame):
+    """Handle SIGTERM/SIGINT for clean systemd stops."""
+    logger.info(f"Received signal {sig}, shutting down...")
+    cleanup()
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
+
+
+# --- Routes ---
 
 @app.route('/')
 def index():
@@ -47,16 +109,10 @@ def index():
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Get current device status"""
-    if controller and controller.connected:
-        return jsonify({
-            'connected': True,
-            'status': controller.get_status()
-        })
-    else:
-        return jsonify({
-            'connected': False,
-            'status': None
-        })
+    with controller_lock:
+        if controller and controller.connected:
+            return jsonify({'connected': True, 'status': controller.get_status()})
+        return jsonify({'connected': False, 'status': None})
 
 
 @app.route('/api/connect', methods=['POST'])
@@ -68,7 +124,6 @@ def connect():
     port = data.get('port', '/dev/ttyUSB0')
     baudrate = data.get('baudrate', 9600)
 
-    # Parse user input defensively so invalid values return 400 instead of 500.
     try:
         baudrate = int(baudrate)
     except (TypeError, ValueError):
@@ -83,36 +138,32 @@ def connect():
             'message': f'Invalid baudrate. Must be one of: {", ".join(map(str, TascamController.VALID_BAUDRATES))}'
         }), 400
 
-    try:
-        if controller:
-            controller.disconnect()
+    with controller_lock:
+        try:
+            if controller:
+                controller.disconnect()
 
-        controller = TascamController(port=port, baudrate=baudrate)
-        controller.register_callback(status_callback)
+            controller = TascamController(port=port, baudrate=baudrate)
+            controller.register_callback(status_callback)
 
-        if controller.connect():
-            return jsonify({
-                'success': True,
-                'message': f'Connected to {port} at {baudrate} baud'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'message': 'Failed to connect to device'
-            }), 500
+            if controller.connect():
+                logger.info(f"Connected to {port} at {baudrate} baud")
+                return jsonify({
+                    'success': True,
+                    'message': f'Connected to {port} at {baudrate} baud'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': 'Failed to connect to device'
+                }), 500
 
-    except ValueError as e:
-        logger.error(f"Connection validation error: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 400
-    except Exception as e:
-        logger.error(f"Connection error: {e}")
-        return jsonify({
-            'success': False,
-            'message': str(e)
-        }), 500
+        except ValueError as e:
+            logger.error(f"Connection validation error: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 400
+        except Exception as e:
+            logger.error(f"Connection error: {e}")
+            return jsonify({'success': False, 'message': str(e)}), 500
 
 
 @app.route('/api/disconnect', methods=['POST'])
@@ -120,210 +171,213 @@ def disconnect():
     """Disconnect from TASCAM device"""
     global controller
 
-    if controller:
-        controller.disconnect()
-        controller = None
+    with controller_lock:
+        if controller:
+            controller.disconnect()
+            controller = None
+        logger.info("Disconnected from device")
 
-    return jsonify({
-        'success': True,
-        'message': 'Disconnected'
-    })
+    return jsonify({'success': True, 'message': 'Disconnected'})
 
 
-# Transport control endpoints
+# --- Transport controls ---
+
 @app.route('/api/play', methods=['POST'])
+@require_connection
 def play():
     """Start playback"""
-    if controller and controller.connected:
-        controller.play()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.play()
+    logger.info("Command: play")
+    return jsonify({'success': True})
 
 
 @app.route('/api/stop', methods=['POST'])
+@require_connection
 def stop():
     """Stop playback"""
-    if controller and controller.connected:
-        controller.stop()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.stop()
+    logger.info("Command: stop")
+    return jsonify({'success': True})
 
 
 @app.route('/api/eject', methods=['POST'])
+@require_connection
 def eject():
     """Eject CD"""
-    if controller and controller.connected:
-        controller.eject()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.eject()
+    logger.info("Command: eject")
+    return jsonify({'success': True})
 
 
 @app.route('/api/next', methods=['POST'])
+@require_connection
 def next_track():
     """Skip to next track"""
-    if controller and controller.connected:
-        controller.next_track()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.next_track()
+    logger.info("Command: next track")
+    return jsonify({'success': True})
 
 
 @app.route('/api/previous', methods=['POST'])
+@require_connection
 def previous_track():
     """Skip to previous track"""
-    if controller and controller.connected:
-        controller.previous_track()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.previous_track()
+    logger.info("Command: previous track")
+    return jsonify({'success': True})
 
 
 @app.route('/api/track/<int:track_number>', methods=['POST'])
+@require_connection
 def goto_track(track_number):
     """Go to specific track"""
-    if controller and controller.connected:
-        controller.goto_track(track_number)
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.goto_track(track_number)
+    logger.info(f"Command: goto track {track_number}")
+    return jsonify({'success': True})
 
 
 @app.route('/api/mode/<mode>', methods=['POST'])
+@require_connection
 def set_mode(mode):
     """Set playback mode"""
-    if controller and controller.connected:
-        if mode in ['continuous', 'single', 'random']:
-            controller.set_play_mode(mode)
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'message': 'Invalid mode'}), 400
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    if mode not in ('continuous', 'single', 'random'):
+        return jsonify({'success': False, 'message': 'Invalid mode'}), 400
+    controller.set_play_mode(mode)
+    logger.info(f"Command: set mode {mode}")
+    return jsonify({'success': True})
 
 
 @app.route('/api/repeat', methods=['POST'])
+@require_connection
 def set_repeat():
     """Toggle repeat mode"""
-    if controller and controller.connected:
-        data = request.get_json() or {}
-        enabled = data.get('enabled', False)
-        controller.set_repeat(enabled)
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    data = request.get_json() or {}
+    enabled = parse_bool(data.get('enabled', False))
+    controller.set_repeat(enabled)
+    logger.info(f"Command: repeat {'on' if enabled else 'off'}")
+    return jsonify({'success': True})
 
 
 @app.route('/api/pause', methods=['POST'])
+@require_connection
 def pause():
     """Pause playback"""
-    if controller and controller.connected:
-        controller.pause()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.pause()
+    logger.info("Command: pause")
+    return jsonify({'success': True})
 
 
 @app.route('/api/resume', methods=['POST'])
+@require_connection
 def resume():
     """Resume from pause"""
-    if controller and controller.connected:
-        controller.resume()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.resume()
+    logger.info("Command: resume")
+    return jsonify({'success': True})
 
 
 @app.route('/api/search/start', methods=['POST'])
+@require_connection
 def search_start():
     """Start searching"""
-    if controller and controller.connected:
-        data = request.get_json() or {}
-        forward = data.get('forward', True)
-        high_speed = data.get('high_speed', False)
-        controller.search_start(forward=forward, high_speed=high_speed)
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    data = request.get_json() or {}
+    forward = parse_bool(data.get('forward', True), default=True)
+    high_speed = parse_bool(data.get('high_speed', False))
+    controller.search_start(forward=forward, high_speed=high_speed)
+    direction = 'forward' if forward else 'reverse'
+    speed = ' (high speed)' if high_speed else ''
+    logger.info(f"Command: search {direction}{speed}")
+    return jsonify({'success': True})
 
 
 @app.route('/api/search/stop', methods=['POST'])
+@require_connection
 def search_stop():
     """Stop searching"""
-    if controller and controller.connected:
-        controller.search_stop()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.search_stop()
+    logger.info("Command: search stop")
+    return jsonify({'success': True})
 
 
 @app.route('/api/resume-mode', methods=['POST'])
+@require_connection
 def set_resume_mode():
     """Toggle resume mode"""
-    if controller and controller.connected:
-        data = request.get_json() or {}
-        enabled = data.get('enabled', False)
-        controller.set_resume_mode(enabled)
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    data = request.get_json() or {}
+    enabled = parse_bool(data.get('enabled', False))
+    controller.set_resume_mode(enabled)
+    logger.info(f"Command: resume mode {'on' if enabled else 'off'}")
+    return jsonify({'success': True})
 
 
 @app.route('/api/device/<device>', methods=['POST'])
+@require_connection
 def switch_device(device):
     """Switch input source"""
-    if controller and controller.connected:
-        valid_devices = ['cd', 'usb', 'sd', 'bluetooth', 'fm', 'am', 'dab', 'aux']
-        if device.lower() in valid_devices:
-            controller.switch_device(device)
-            return jsonify({'success': True})
-        else:
-            return jsonify({'success': False, 'message': 'Invalid device'}), 400
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    valid_devices = ('cd', 'usb', 'sd', 'bluetooth', 'fm', 'am', 'dab', 'aux')
+    if device.lower() not in valid_devices:
+        return jsonify({'success': False, 'message': 'Invalid device'}), 400
+    controller.switch_device(device)
+    logger.info(f"Command: switch device to {device}")
+    return jsonify({'success': True})
 
 
-# Tuner control endpoints (for FM/AM/DAB radio)
+# --- Tuner controls ---
+
 @app.route('/api/tuner/frequency/up', methods=['POST'])
+@require_connection
 def tuner_frequency_up():
     """Tune frequency up"""
-    if controller and controller.connected:
-        controller.tuner_frequency_up()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.tuner_frequency_up()
+    logger.info("Command: tuner frequency up")
+    return jsonify({'success': True})
 
 
 @app.route('/api/tuner/frequency/down', methods=['POST'])
+@require_connection
 def tuner_frequency_down():
     """Tune frequency down"""
-    if controller and controller.connected:
-        controller.tuner_frequency_down()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.tuner_frequency_down()
+    logger.info("Command: tuner frequency down")
+    return jsonify({'success': True})
 
 
 @app.route('/api/tuner/seek/up', methods=['POST'])
+@require_connection
 def tuner_seek_up():
     """Auto-seek next station"""
-    if controller and controller.connected:
-        controller.tuner_seek_up()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.tuner_seek_up()
+    logger.info("Command: tuner seek up")
+    return jsonify({'success': True})
 
 
 @app.route('/api/tuner/seek/down', methods=['POST'])
+@require_connection
 def tuner_seek_down():
     """Auto-seek previous station"""
-    if controller and controller.connected:
-        controller.tuner_seek_down()
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.tuner_seek_down()
+    logger.info("Command: tuner seek down")
+    return jsonify({'success': True})
 
 
 @app.route('/api/tuner/preset/<int:preset>', methods=['POST'])
+@require_connection
 def tuner_preset(preset):
     """Select tuner preset"""
-    if controller and controller.connected:
-        controller.tuner_preset(preset)
-        return jsonify({'success': True})
-    return jsonify({'success': False, 'message': 'Not connected'}), 400
+    controller.tuner_preset(preset)
+    logger.info(f"Command: tuner preset {preset}")
+    return jsonify({'success': True})
 
 
-# WebSocket events
+# --- WebSocket events ---
+
 @socketio.on('connect')
 def handle_connect():
     """Handle client connection"""
     logger.info('Client connected')
-    if controller and controller.connected:
-        emit('status_update', controller.get_status())
+    with controller_lock:
+        if controller and controller.connected:
+            emit('status_update', controller.get_status())
 
 
 @socketio.on('disconnect')
@@ -335,8 +389,9 @@ def handle_disconnect():
 @socketio.on('request_status')
 def handle_request_status():
     """Handle status request from client"""
-    if controller and controller.connected:
-        emit('status_update', controller.get_status())
+    with controller_lock:
+        if controller and controller.connected:
+            emit('status_update', controller.get_status())
 
 
 if __name__ == '__main__':
