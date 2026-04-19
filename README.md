@@ -5,6 +5,7 @@ A mobile-first web application for controlling the TASCAM CD-400U/CD-400UDAB pro
 ## Features
 
 - **Mobile-Optimized Interface**: Responsive design works perfectly on phones, tablets, and desktop
+- **Installable PWA**: Add to home screen on iOS/Android for a full-screen, app-like experience
 - **Real-Time Updates**: WebSocket-based live status updates
 - **Full Transport Control**: Play, Stop, Eject, Track Skip, Direct Track Access
 - **Playback Modes**: Continuous, Single, Random
@@ -152,6 +153,26 @@ Click "Connection Settings" to:
 - Adjust baud rate
 - Connect/disconnect manually
 
+### Install as a Home-Screen App (PWA)
+
+The controller is a Progressive Web App. Once you've loaded it in a browser
+on the same network as the Pi, you can install it for an app-like experience:
+
+- **iOS (Safari)**: Share → "Add to Home Screen".
+- **Android (Chrome)**: Menu → "Install app" / "Add to Home screen".
+- **Desktop (Chrome/Edge)**: Install icon in the address bar.
+
+The service worker caches the UI shell and icons so the interface still loads
+when the Pi is briefly unreachable. Live device state (`/api/*` and the
+WebSocket) is always fetched fresh — it is never served from cache.
+
+To regenerate the home-screen icons after a redesign:
+
+```bash
+pip install Pillow
+python3 scripts/generate_icons.py
+```
+
 ## RS-232 Configuration
 
 The TASCAM CD-400U RS-232 settings must match the software:
@@ -254,6 +275,12 @@ cdrs232/
 ├── tascam_controller.py        # RS-232 protocol implementation
 ├── templates/
 │   └── index.html              # Web interface
+├── static/
+│   ├── manifest.webmanifest    # PWA manifest
+│   ├── service-worker.js       # PWA service worker (offline shell)
+│   └── icons/                  # PWA / home-screen icons
+├── scripts/
+│   └── generate_icons.py       # Regenerate PWA icons (requires Pillow)
 ├── requirements.txt            # Python dependencies
 ├── config.ini                  # Configuration file
 ├── tascam-controller.service   # Systemd service

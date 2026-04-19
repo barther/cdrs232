@@ -10,7 +10,7 @@ import sys
 from functools import wraps
 from threading import RLock
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, send_from_directory
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 import logging
@@ -104,6 +104,29 @@ signal.signal(signal.SIGINT, signal_handler)
 def index():
     """Serve the main page"""
     return render_template('index.html')
+
+
+@app.route('/service-worker.js')
+def service_worker():
+    """Serve the service worker from the site root so it can claim scope '/'.
+
+    A service worker hosted under /static/ would only control /static/* by
+    default. Serving it from the root keeps the whole app installable.
+    """
+    response = send_from_directory(
+        app.static_folder, 'service-worker.js', mimetype='application/javascript'
+    )
+    response.headers['Service-Worker-Allowed'] = '/'
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
+
+
+@app.route('/manifest.webmanifest')
+def manifest():
+    """Serve the PWA manifest with the correct MIME type."""
+    return send_from_directory(
+        app.static_folder, 'manifest.webmanifest', mimetype='application/manifest+json'
+    )
 
 
 @app.route('/api/status', methods=['GET'])
