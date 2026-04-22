@@ -952,10 +952,56 @@
             }
         }
 
-        // ── Socket events ──
-        socket.on('connect', () => socket.emit('request_status'));
-        socket.on('disconnect', () => {});
-        socket.on('status_update', (s) => updateDisplay(s));
+        // ── Socket events with auto-reconnect ──
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 10;
+
+        socket.on('connect', () => {
+            console.log('WebSocket connected');
+            reconnectAttempts = 0;
+            connDot.style.backgroundColor = '#4CAF50';  // Green - connected
+            connDot.title = 'WebSocket Connected';
+            socket.emit('request_status');
+        });
+
+        socket.on('disconnect', (reason) => {
+            console.warn('WebSocket disconnected:', reason);
+            connDot.style.backgroundColor = '#f44336';  // Red - disconnected
+            connDot.title = 'WebSocket Disconnected - Reconnecting...';
+
+            // Auto-reconnect if not a manual disconnect
+            if (reason === 'io server disconnect') {
+                // Server initiated - reconnect manually
+                socket.connect();
+            }
+            // For other reasons, socket.io auto-reconnects
+        });
+
+        socket.on('connect_error', (error) => {
+            console.error('WebSocket connection error:', error);
+            reconnectAttempts++;
+            connDot.style.backgroundColor = '#ff9800';  // Orange - trying to reconnect
+            connDot.title = `Connection Error - Retry ${reconnectAttempts}/${maxReconnectAttempts}`;
+
+            if (reconnectAttempts >= maxReconnectAttempts) {
+                console.error('Max reconnect attempts reached');
+                connDot.style.backgroundColor = '#f44336';  // Red - failed
+                connDot.title = 'Connection Failed - Reload Page';
+            }
+        });
+
+        socket.on('reconnect', (attemptNumber) => {
+            console.log('WebSocket reconnected after', attemptNumber, 'attempts');
+            reconnectAttempts = 0;
+            socket.emit('request_status');
+        });
+
+        socket.on('status_update', (s) => {
+            // Visual feedback that we're receiving updates
+            connDot.style.opacity = '0.5';
+            setTimeout(() => connDot.style.opacity = '1', 100);
+            updateDisplay(s);
+        });
 
         // ── Initial load ──
         fetch('/api/status')
@@ -965,6 +1011,27 @@
                 if (d.connected && d.status) updateDisplay(d.status);
             })
             .catch(e => console.error('Init failed:', e));
+
+        // ── Fallback polling (in case WebSocket drops silently) ──
+        let lastStatusUpdate = Date.now();
+        socket.on('status_update', () => { lastStatusUpdate = Date.now(); });
+
+        setInterval(() => {
+            const timeSinceUpdate = Date.now() - lastStatusUpdate;
+            // If no update in 5 seconds, poll manually
+            if (timeSinceUpdate > 5000) {
+                console.warn('No WebSocket updates for 5s, polling manually');
+                fetch('/api/status')
+                    .then(r => r.json())
+                    .then(d => {
+                        if (d.connected && d.status) {
+                            updateDisplay(d.status);
+                            lastStatusUpdate = Date.now();
+                        }
+                    })
+                    .catch(e => console.error('Fallback poll failed:', e));
+            }
+        }, 2000);  // Check every 2 seconds
 
         // ── PWA service worker ──
         if ('serviceWorker' in navigator) {
