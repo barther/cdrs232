@@ -68,10 +68,10 @@ def require_connection(f):
 
 
 def status_callback(status: dict):
-    """Callback for status updates from controller"""
+    """Callback for status updates from controller - broadcasts to ALL clients"""
     try:
-        socketio.emit('status_update', status)
-        logger.debug(f"Status update broadcast: {status}")
+        socketio.emit('status_update', status, broadcast=True)
+        logger.debug(f"Status broadcast to all clients: {status}")
     except Exception as e:
         logger.error(f"Failed to broadcast status: {e}")
 
@@ -444,6 +444,26 @@ if __name__ == '__main__':
         except Exception as e:
             logger.error(f"Auto-connect error: {e}")
             controller = None
+
+    # Start periodic state sync to keep all clients synchronized
+    def periodic_state_sync():
+        """Broadcast full state every 3 seconds to all clients"""
+        while True:
+            time.sleep(3)
+            try:
+                with controller_lock:
+                    if controller and controller.connected:
+                        status = controller.get_status()
+                        socketio.emit('status_update', status, broadcast=True)
+                        logger.debug("Periodic state sync broadcast")
+            except Exception as e:
+                logger.error(f"Periodic sync error: {e}")
+
+    import threading
+    import time
+    sync_thread = threading.Thread(target=periodic_state_sync, daemon=True)
+    sync_thread.start()
+    logger.info("Started periodic state sync (3s interval)")
 
     # Start server
     logger.info(f"Starting server on {args.host}:{args.port}")
