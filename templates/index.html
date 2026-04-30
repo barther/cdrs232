@@ -1000,25 +1000,37 @@
         let lastStatusUpdate = Date.now();
 
         socket.on('status_update', (s) => {
+            console.log('📡 Status update received:', s);
+
             // Visual feedback that we're receiving updates
             connDot.style.opacity = '0.5';
             setTimeout(() => connDot.style.opacity = '1', 100);
 
             // Update display
-            updateDisplay(s);
+            try {
+                updateDisplay(s);
+                console.log('✓ Display updated');
+            } catch (e) {
+                console.error('❌ updateDisplay failed:', e);
+            }
 
             // Track last update time for fallback polling
             lastStatusUpdate = Date.now();
         });
 
         // ── Initial load ──
+        console.log('🔄 Fetching initial status...');
         fetch('/api/status')
             .then(r => r.json())
             .then(d => {
+                console.log('📦 Initial status received:', d);
                 updateConnection(d.connected);
-                if (d.connected && d.status) updateDisplay(d.status);
+                if (d.connected && d.status) {
+                    updateDisplay(d.status);
+                    console.log('✓ Initial display updated');
+                }
             })
-            .catch(e => console.error('Init failed:', e));
+            .catch(e => console.error('❌ Init failed:', e));
 
         // ── Fallback polling (in case WebSocket drops silently) ──
         setInterval(() => {
