@@ -996,11 +996,19 @@
             socket.emit('request_status');
         });
 
+        // ── Status updates with fallback polling ──
+        let lastStatusUpdate = Date.now();
+
         socket.on('status_update', (s) => {
             // Visual feedback that we're receiving updates
             connDot.style.opacity = '0.5';
             setTimeout(() => connDot.style.opacity = '1', 100);
+
+            // Update display
             updateDisplay(s);
+
+            // Track last update time for fallback polling
+            lastStatusUpdate = Date.now();
         });
 
         // ── Initial load ──
@@ -1013,9 +1021,6 @@
             .catch(e => console.error('Init failed:', e));
 
         // ── Fallback polling (in case WebSocket drops silently) ──
-        let lastStatusUpdate = Date.now();
-        socket.on('status_update', () => { lastStatusUpdate = Date.now(); });
-
         setInterval(() => {
             const timeSinceUpdate = Date.now() - lastStatusUpdate;
             // If no update in 5 seconds, poll manually
