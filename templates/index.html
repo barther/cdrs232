@@ -558,6 +558,11 @@
         <!-- ERROR / CAUTION BANNER -->
         <div class="error-banner" id="errorBanner"></div>
 
+        <!-- DEBUG STATUS (temporary) -->
+        <div id="debugStatus" style="background: #1a1a1a; color: #0f0; font-family: monospace; font-size: 10px; padding: 4px; text-align: center; border-top: 1px solid #333;">
+            WS: <span id="debugWS">...</span> | Updates: <span id="debugCount">0</span> | Last: <span id="debugLast">never</span>
+        </div>
+
         <!-- TRANSPORT -->
         <div class="transport">
             <div class="transport-primary">
@@ -998,9 +1003,15 @@
 
         // ── Status updates with fallback polling ──
         let lastStatusUpdate = Date.now();
+        let updateCount = 0;
 
         socket.on('status_update', (s) => {
             console.log('📡 Status update received:', s);
+            updateCount++;
+
+            // Update debug status
+            $('debugCount').textContent = updateCount;
+            $('debugLast').textContent = new Date().toLocaleTimeString();
 
             // Visual feedback that we're receiving updates
             connDot.style.opacity = '0.5';
@@ -1012,6 +1023,8 @@
                 console.log('✓ Display updated');
             } catch (e) {
                 console.error('❌ updateDisplay failed:', e);
+                $('debugStatus').style.background = '#f00';
+                $('debugStatus').textContent = 'ERROR: ' + e.message;
             }
 
             // Track last update time for fallback polling
