@@ -1,390 +1,166 @@
 # TASCAM CD-400U Web Controller
 
-A mobile-first web application for controlling the TASCAM CD-400U/CD-400UDAB professional CD player via RS-232C interface. Designed to run on Raspberry Pi 3 or later with a USB-to-RS232 adapter.
+A phone-friendly web page for controlling a TASCAM CD-400U/CD-400UDAB over
+RS-232C, served from a Raspberry Pi with a USB-to-RS232 adapter.
 
-## Features
+## What it does
 
-- **Mobile-Optimized Interface**: Responsive design works perfectly on phones, tablets, and desktop
-- **Installable PWA**: Add to home screen on iOS/Android for a full-screen, app-like experience
-- **Real-Time Updates**: WebSocket-based live status updates
-- **Full Transport Control**: Play, Stop, Eject, Track Skip, Direct Track Access
-- **Playback Modes**: Continuous, Single, Random
-- **Professional UI**: Clean, modern interface with visual feedback
-- **Raspberry Pi Ready**: Lightweight and optimized for Raspberry Pi deployment
+- Big track / time / status display that follows the deck within a fraction
+  of a second
+- Play/Pause, Stop, Previous/Next, tap a track number to cue it
+- Source (CD/USB/SD/BT/FM/AM/AUX), play mode, repeat, hold-to-search, eject
+- Clear status when something is wrong: Pi unreachable, USB adapter missing,
+  or the deck switched off. It reconnects on its own when the problem clears.
+- Any number of phones at once; they all show the same state
+- Installable to the home screen (PWA)
 
-## Hardware Requirements
+## How it works
 
-- Raspberry Pi 3 or newer (tested on Pi 3B, 3B+, 4, Zero 2W)
-- USB to RS-232 adapter (FTDI chip recommended)
-- TASCAM CD-400U or CD-400UDAB
-- Standard RS-232 cable (DB-9 female to DB-9 female)
-- MicroSD card (8GB minimum)
-- Power supply for Raspberry Pi
-
-## Quick Start
-
-### 1. Setup Raspberry Pi
-
-```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
-
-# Install Python and dependencies
-sudo apt install python3 python3-pip python3-venv git -y
-
-# Add user to dialout group for serial port access
-sudo usermod -a -G dialout $USER
-
-# Reboot to apply group changes
-sudo reboot
+```
+phone ──HTTP──> Flask (app.py) ──> TascamController ──RS-232──> CD-400U
 ```
 
-### 2. Install Application
+- `tascam_controller.py` owns the serial port with one background thread.
+  Each pass it applies **every** reply the deck has sent, then sends one
+  command: a button press if one is waiting, otherwise the next status query.
+  Commands are spaced 100 ms apart as the protocol requires. If the deck
+  stops answering for 3 s it is reported offline; if the adapter disappears
+  the port is reopened every 5 s.
+- `app.py` serves the page and a small JSON API. Commands are refused while
+  the deck is offline, so a press made then can't fire later.
+- `templates/index.html` polls `/api/status` about three times a second. Every
+  reply is the complete state, so a phone that sleeps or drops Wi-Fi simply
+  catches up on its next poll. There is no WebSocket layer to fall out of sync.
+
+## Hardware
+
+- Raspberry Pi 3 or newer
+- USB to RS-232 adapter (FTDI recommended)
+- TASCAM CD-400U or CD-400UDAB
+- DB-9 female to DB-9 female RS-232 cable
+
+## Install
 
 ```bash
-# Clone or download this repository
+sudo apt update
+sudo apt install python3 python3-pip python3-venv git -y
+sudo usermod -a -G dialout $USER   # serial port access; reboot afterwards
+
 cd ~
 git clone <repository-url> cdrs232
 cd cdrs232
-
-# Create virtual environment
 python3 -m venv venv
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 3. Find Your USB-RS232 Adapter
+## Run
 
 ```bash
-# List USB serial devices
-ls -l /dev/ttyUSB*
-
-# Or check kernel messages
-dmesg | grep tty
-```
-
-The device is typically `/dev/ttyUSB0`. Note the path for configuration.
-
-### 4. Configure Connection
-
-Edit `config.ini` to match your setup:
-
-```ini
-[serial]
-port = /dev/ttyUSB0
-baudrate = 9600
-
-[server]
-host = 0.0.0.0
-port = 5000
-auto_connect = true
-```
-
-**Note**: Baud rate must match your TASCAM device settings (default is usually 9600).
-
-### 5. Run the Application
-
-```bash
-# Activate virtual environment
 source venv/bin/activate
-
-# Run with auto-connect
-python app.py --auto-connect
-
-# Or specify settings manually
-python app.py --serial-port /dev/ttyUSB0 --baudrate 9600 --host 0.0.0.0 --port 5000
+python app.py --serial-port /dev/serial/by-id/usb-FTDI_... --baudrate 9600
 ```
 
-### 6. Access the Interface
+Then open `http://<pi-ip>:5000` on a phone on the same network
+(`hostname -I` shows the Pi's address).
 
-Open a web browser and navigate to:
-- From same device: `http://localhost:5000`
-- From network: `http://<raspberry-pi-ip>:5000`
+The controller connects by itself at startup and keeps retrying, so the Pi
+can boot before the deck is switched on. Use the persistent
+`/dev/serial/by-id/...` path rather than `/dev/ttyUSB0` (see
+`USB_PORT_GUIDE.md`). The baud rate must match the deck's RS-232C setting.
 
-To find your Pi's IP address:
-```bash
-hostname -I
+### Options
+
+```
+--host HOST          Address to bind (default 0.0.0.0)
+--port PORT          Web port (default 5000)
+--serial-port PATH   Serial device (default: the FTDI by-id path)
+--baudrate RATE      4800, 9600, 19200, 38400 or 57600 (default 9600)
+--sim                Use a simulated deck instead of the serial port
 ```
 
-## Installation as System Service
+`--auto-connect` is still accepted so existing service files keep working;
+connecting is always automatic now.
 
-To run the controller automatically on boot:
-
-```bash
-# Edit service file to match your installation path
-sudo nano tascam-controller.service
-
-# Copy service file
-sudo cp tascam-controller.service /etc/systemd/system/
-
-# Enable and start service
-sudo systemctl enable tascam-controller.service
-sudo systemctl start tascam-controller.service
-
-# Check status
-sudo systemctl status tascam-controller.service
-
-# View logs
-sudo journalctl -u tascam-controller.service -f
-```
-
-## Usage
-
-### Transport Controls
-
-- **Play**: Start playback from current position
-- **Stop**: Stop playback
-- **Eject**: Eject the CD
-- **Previous/Next**: Skip to previous/next track
-- **Track Number**: Enter track number and press GO to jump directly
-
-### Playback Modes
-
-- **Continuous**: Play all tracks in sequence
-- **Single**: Play one track and stop
-- **Random**: Play tracks in random order
-
-### Connection Settings
-
-Click "Connection Settings" to:
-- Change serial port
-- Adjust baud rate
-- Connect/disconnect manually
-
-### Install as a Home-Screen App (PWA)
-
-The controller is a Progressive Web App. Once you've loaded it in a browser
-on the same network as the Pi, you can install it for an app-like experience:
-
-- **iOS (Safari)**: Share → "Add to Home Screen".
-- **Android (Chrome)**: Menu → "Install app" / "Add to Home screen".
-- **Desktop (Chrome/Edge)**: Install icon in the address bar.
-
-The service worker caches the UI shell and icons so the interface still loads
-when the Pi is briefly unreachable. Live device state (`/api/*` and the
-WebSocket) is always fetched fresh — it is never served from cache.
-
-To regenerate the home-screen icons after a redesign:
+### Try it without the deck
 
 ```bash
-pip install Pillow
-python3 scripts/generate_icons.py
+python app.py --sim
 ```
 
-## RS-232 Configuration
+`tascam_sim.py` pretends to be a CD-400U on a pseudo-terminal: time runs
+while playing, tracks advance, and the buttons do what they should.
 
-The TASCAM CD-400U RS-232 settings must match the software:
+## Run on boot (systemd)
 
-- **Baud Rate**: 4800/9600/19200/38400/57600 (configurable on device)
-- **Data Bits**: 8
-- **Parity**: None
-- **Stop Bits**: 1
-- **Flow Control**: Hardware (RTS/CTS)
+`install-service.sh` creates and enables a service (edit the user, paths and
+serial port at the top first). Or by hand:
 
-See the device manual for changing RS-232 settings.
+```bash
+sudo cp tascam-controller.service /etc/systemd/system/   # edit paths/user first
+sudo systemctl enable --now tascam-controller.service
+sudo journalctl -u tascam-controller.service -f          # logs
+```
+
+## Install as a home-screen app
+
+- **iOS (Safari)**: Share → Add to Home Screen
+- **Android (Chrome)**: menu → Install app
+
+## RS-232C settings on the deck
+
+8 data bits, no parity, 1 stop bit, baud rate matching `--baudrate`.
+Pins 7 and 8 are shorted inside the deck, so no flow control is used.
 
 ## Troubleshooting
 
-### Serial Port Permission Denied
+The status pill and the red notice under it say what's wrong:
 
-```bash
-# Add user to dialout group
-sudo usermod -a -G dialout $USER
+| Shown | Meaning | Fix |
+|-------|---------|-----|
+| NO SERVER | The phone can't reach the Pi | Phone on the right Wi-Fi? Pi on? `systemctl status tascam-controller` |
+| OFFLINE + "USB serial adapter isn't connected" | The serial port can't be opened | Check the USB adapter; check the `--serial-port` path; user in `dialout` group |
+| OFFLINE + "CD player isn't answering" | Port is open but the deck is silent | Deck powered on? Cable seated? Baud rate matches the deck? |
 
-# Reboot
-sudo reboot
-```
+`python test_serial.py` sends one status query and prints the raw reply,
+which is handy for checking the cable and baud rate.
 
-### Device Not Found
+## API
 
-```bash
-# Check if adapter is detected
-lsusb
+All commands are `POST` and return `{"success": true}`, or 503 while the
+deck is offline.
 
-# Check kernel messages
-dmesg | tail -20
-
-# List all serial devices
-ls -l /dev/tty*
-```
-
-### Connection Failed
-
-1. Verify serial port path is correct
-2. Check baud rate matches device setting
-3. Ensure cable is properly connected
-4. Try different USB port
-5. Check cable continuity (pins 2, 3, 5, 7, 8)
-
-### No Status Updates
-
-1. Check WebSocket connection in browser console
-2. Restart the application
-3. Check firewall settings
-4. Verify device is responding to commands
-
-### Commands Not Working
-
-1. Ensure device is in Remote mode (not Local)
-2. Check RS-232 cable pins 7-8 are shorted
-3. Verify hardware flow control (RTS/CTS)
-4. Check command logs: `journalctl -u tascam-controller -f`
-
-## Network Access
-
-### Access from Other Devices
-
-Make sure your Raspberry Pi and client devices are on the same network.
-
-Find the Pi's IP:
-```bash
-hostname -I
-```
-
-Access from mobile/tablet: `http://192.168.1.xxx:5000`
-
-### Optional: Set Static IP
-
-Edit `/etc/dhcpcd.conf`:
-```bash
-sudo nano /etc/dhcpcd.conf
-```
-
-Add:
-```
-interface eth0
-static ip_address=192.168.1.100/24
-static routers=192.168.1.1
-static domain_name_servers=192.168.1.1 8.8.8.8
-```
-
-Restart networking:
-```bash
-sudo systemctl restart dhcpcd
-```
+| Endpoint | Action |
+|----------|--------|
+| `GET /api/status` | Full state, plus `online` and `port_open` |
+| `/api/play`, `/api/pause`, `/api/resume`, `/api/stop` | Transport |
+| `/api/next`, `/api/previous`, `/api/track/<n>` | Track selection |
+| `/api/search/start` `{"forward": true}`, `/api/search/stop` | Search |
+| `/api/eject` | Eject |
+| `/api/mode/<continuous\|single\|random>` | Play mode |
+| `/api/repeat` `{"enabled": true}`, `/api/resume-mode` `{"enabled": true}` | Toggles |
+| `/api/device/<cd\|usb\|sd\|bluetooth\|fm\|am\|aux>` | Source |
+| `/api/tuner/frequency/<up\|down>`, `/api/tuner/seek/<up\|down>`, `/api/tuner/preset/<n>` | Tuner |
 
 ## Development
 
-### Project Structure
-
 ```
-cdrs232/
-├── app.py                      # Flask web server
-├── tascam_controller.py        # RS-232 protocol implementation
-├── templates/
-│   └── index.html              # Web interface
-├── static/
-│   ├── manifest.webmanifest    # PWA manifest
-│   ├── service-worker.js       # PWA service worker (offline shell)
-│   └── icons/                  # PWA / home-screen icons
-├── scripts/
-│   └── generate_icons.py       # Regenerate PWA icons (requires Pillow)
-├── requirements.txt            # Python dependencies
-├── config.ini                  # Configuration file
-├── tascam-controller.service   # Systemd service
-├── instructions.md             # Protocol documentation
-└── README.md                   # This file
+app.py                  Flask app + API
+tascam_controller.py    RS-232 protocol and serial I/O
+tascam_sim.py           Simulated deck for development and tests
+templates/index.html    The page (no external dependencies)
+static/                 PWA manifest, service worker, icons
+tests/                  python -m unittest discover -s tests
+instructions.md         Protocol notes
 ```
 
-### Running in Development Mode
+## Security
 
-```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Run with debug logging
-export FLASK_ENV=development
-python app.py
-```
-
-### Testing Without Hardware
-
-The application will start even without a connected TASCAM device. You can test the web interface and simulate connections.
-
-## Command Line Options
-
-```bash
-python app.py --help
-
-Options:
-  --host HOST              Host to bind to (default: 0.0.0.0)
-  --port PORT              Port to bind to (default: 5000)
-  --serial-port PORT       Serial port (default: /dev/ttyUSB0)
-  --baudrate RATE          Baud rate (default: 9600)
-  --auto-connect           Auto-connect on startup
-```
-
-## API Endpoints
-
-The application provides a REST API:
-
-### Status
-- `GET /api/status` - Get current device status
-
-### Connection
-- `POST /api/connect` - Connect to device
-- `POST /api/disconnect` - Disconnect from device
-
-### Transport
-- `POST /api/play` - Start playback
-- `POST /api/stop` - Stop playback
-- `POST /api/eject` - Eject CD
-- `POST /api/next` - Next track
-- `POST /api/previous` - Previous track
-- `POST /api/track/<number>` - Go to track
-
-### Modes
-- `POST /api/mode/<mode>` - Set mode (continuous/single/random)
-- `POST /api/repeat` - Toggle repeat
-
-## WebSocket Events
-
-### Client -> Server
-- `request_status` - Request current status
-
-### Server -> Client
-- `status_update` - Status update (sent automatically)
-
-## Performance
-
-- CPU Usage: ~5% on Raspberry Pi 3B
-- Memory: ~50MB
-- Network: Minimal (WebSocket + occasional HTTP)
-- Latency: <50ms command response
-
-## Security Notes
-
-⚠️ **Important**: This application does not include authentication. If exposing to the internet:
-
-1. Use a reverse proxy with authentication (nginx + basic auth)
-2. Use a VPN to access your home network
-3. Implement firewall rules to restrict access
-4. Consider adding HTTPS with Let's Encrypt
+There is no login. Anyone on the network who can reach the Pi can control
+the deck. Keep it on a private network.
 
 ## License & Legal
 
-This software is provided as-is without warranty. The TASCAM RS-232C protocol is proprietary to TEAC Corporation. Use of this protocol requires acceptance of TEAC's protocol use agreement. See `instructions.md` for full legal terms.
-
-## Credits
-
-- Protocol implementation based on TASCAM CD-400U RS-232C Protocol Specification v1.21
-- Interface design optimized for mobile control
-- Built with Flask, Socket.IO, and vanilla JavaScript
-
-## Support
-
-For issues and questions:
-1. Check troubleshooting section above
-2. Review `instructions.md` for protocol details
-3. Check system logs: `journalctl -u tascam-controller -f`
-4. Verify hardware connections
-
-## Version History
-
-- **v1.0.0** (2025) - Initial release
-  - Full transport control
-  - Real-time status updates
-  - Mobile-first interface
-  - Raspberry Pi optimized
+This software is provided as-is without warranty. The TASCAM RS-232C protocol
+is proprietary to TEAC Corporation; use of it requires acceptance of TEAC's
+protocol use agreement. See `instructions.md`.

@@ -10,7 +10,7 @@
  *  - For other GET requests under our origin, fall back to cache-first.
  */
 
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL_CACHE = `tascam-shell-${VERSION}`;
 const RUNTIME_CACHE = `tascam-runtime-${VERSION}`;
 
