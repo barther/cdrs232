@@ -113,7 +113,7 @@ class TascamController:
 
     # Timing constants (in seconds)
     CMD_INTERVAL = 0.1  # 100ms minimum between commands
-    OFFLINE_AFTER = 2.0  # no reply for this long => deck is off / unplugged
+    OFFLINE_AFTER = 3.0  # no reply for this long => deck is off / unplugged
     REOPEN_INTERVAL = 5.0  # retry period while the serial port can't be opened
 
     # Allowed baud rates per TASCAM RS-232C spec

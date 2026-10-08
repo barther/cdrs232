@@ -24,7 +24,7 @@ phone ──HTTP──> Flask (app.py) ──> TascamController ──RS-232─�
   Each pass it applies **every** reply the deck has sent, then sends one
   command: a button press if one is waiting, otherwise the next status query.
   Commands are spaced 100 ms apart as the protocol requires. If the deck
-  stops answering for 2 s it is reported offline; if the adapter disappears
+  stops answering for 3 s it is reported offline; if the adapter disappears
   the port is reopened every 5 s.
 - `app.py` serves the page and a small JSON API. Commands are refused while
   the deck is offline, so a press made then can't fire later.
